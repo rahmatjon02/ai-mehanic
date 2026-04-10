@@ -37,6 +37,7 @@ yarn-error.log*
 # Prisma
 prisma/migrations/dev.db
 prisma/*.db
+**/prisma/*.db
 
 # Testing
 coverage
