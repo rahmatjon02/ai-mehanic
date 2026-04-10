@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "AI Mechanic",
+    "slug": "ai-mechanic",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0F0F"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hackathon.aimechanic"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F0F0F"
+      },
+      "package": "com.hackathon.aimechanic"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Diagnosis {
+  id          String   @id @default(uuid())
+  fileType    String
+  filePath    String
+  rawResult   String
+  problem     String
+  description String
+  severity    String
+  totalMin    Float
+  totalMax    Float
+  createdAt   DateTime @default(now())
+  quotes      Quote[]
+}
+
+model Quote {
+  id              String    @id @default(uuid())
+  diagnosisId     String
+  diagnosis       Diagnosis @relation(fields: [diagnosisId], references: [id])
+  filePath        String?
+  mechanicTotal   Float
+  verdict         String
+  overchargeAmt   Float
+  overchargePct   Float
+  explanation     String
+  rawResult       String
+  createdAt       DateTime  @default(now())
+}
