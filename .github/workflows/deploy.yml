@@ -1,0 +1,25 @@
+name: Deploy AI Mechanic
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /var/www/ai-mehanic/backend
+            git -C /var/www/ai-mehanic pull origin master
+            npm install --prefix /var/www/ai-mehanic/backend
+            npm run build --prefix /var/www/ai-mehanic/backend
+            PORT=3006 pm2 restart ai-mechanic --update-env
+            pm2 save
