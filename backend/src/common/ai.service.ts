@@ -227,7 +227,13 @@ ${JSON.stringify(input.diagnosis)}`;
         const shouldTryNextModel =
           message.includes('404') ||
           message.includes('not found') ||
-          message.includes('not supported');
+          message.includes('not supported') ||
+          message.includes('503') ||
+          message.includes('service unavailable') ||
+          message.includes('high demand') ||
+          message.includes('overloaded') ||
+          message.includes('429') ||
+          message.includes('quota');
 
         if (!shouldTryNextModel) {
           throw lastError;

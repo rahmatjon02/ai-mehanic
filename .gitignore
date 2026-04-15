@@ -50,6 +50,8 @@ coverage
 # Uploads
 uploads/*
 !uploads/.gitkeep
+**/uploads/*
+!**/uploads/.gitkeep
 
 # Temporary files
 *.tmp
