@@ -15,7 +15,7 @@ import {
   QuoteComparisonResult,
 } from './types';
 
-const DIAGNOSIS_PROMPT = `You are an expert auto mechanic. Analyze this car problem.
+const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic. Analyze this car problem.
 
  Return ONLY valid JSON (no markdown):
 
@@ -45,7 +45,7 @@ const DIAGNOSIS_PROMPT = `You are an expert auto mechanic. Analyze this car prob
 
  }`;
 
-const QUOTE_PROMPT = `Compare mechanic quote vs fair estimate.
+const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechanic quote vs fair estimate.
 
  Return ONLY valid JSON:
 
