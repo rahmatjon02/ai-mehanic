@@ -79,7 +79,7 @@ export class AiService {
   constructor(private readonly configService: ConfigService) {
     this.geminiApiKey = this.configService.get<string>('GEMINI_API_KEY') ?? '';
     this.geminiModel =
-      this.configService.get<string>('GEMINI_MODEL')?.trim() || 'gemini-2.5-flash';
+      this.configService.get<string>('GEMINI_MODEL')?.trim() || 'gemini-2.0-flash';
     this.openAiApiKey = this.configService.get<string>('OPENAI_API_KEY') ?? '';
   }
 
@@ -208,14 +208,17 @@ ${JSON.stringify(input.diagnosis)}`;
     }
 
     const candidateModels = Array.from(
-      new Set([this.geminiModel, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']),
+      new Set([this.geminiModel, 'gemini-2.0-flash', 'gemini-2.0-flash-lite']),
     );
 
     let lastError: Error | null = null;
 
     for (const modelName of candidateModels) {
       try {
-        const model = gemini.getGenerativeModel({ model: modelName });
+        const model = gemini.getGenerativeModel({
+          model: modelName,
+          systemInstruction: 'You must respond only in Russian language.',
+        });
         const result = await model.generateContent(parts);
         const text = result.response.text();
         return safeJsonParse<T>(text);
@@ -273,7 +276,7 @@ ${JSON.stringify(input.diagnosis)}`;
       verdict: this.normalizeVerdict(result.verdict),
       overcharge_amount: Number(result.overcharge_amount ?? 0),
       overcharge_percent: Number(result.overcharge_percent ?? 0),
-      explanation: result.explanation ?? 'Quote compared with the estimated repair range.',
+      explanation: result.explanation ?? 'Смета сравнена с расчётным диапазоном стоимости ремонта.',
       suspicious_items: result.suspicious_items ?? [],
     };
   }
@@ -285,12 +288,12 @@ ${JSON.stringify(input.diagnosis)}`;
     const brakeFocused = textHint.toLowerCase().includes('brake') || fileType !== 'video';
     const parts = brakeFocused
       ? [
-          { name: 'Brake Pads', price_min: 40, price_max: 75, currency: 'USD' },
-          { name: 'Brake Rotors', price_min: 80, price_max: 140, currency: 'USD' },
+          { name: 'Тормозные колодки', price_min: 40, price_max: 75, currency: 'USD' },
+          { name: 'Тормозные диски', price_min: 80, price_max: 140, currency: 'USD' },
         ]
       : [
-          { name: 'Catalytic Converter Sensor', price_min: 120, price_max: 210, currency: 'USD' },
-          { name: 'Exhaust Gasket Kit', price_min: 25, price_max: 45, currency: 'USD' },
+          { name: 'Датчик каталитического нейтрализатора', price_min: 120, price_max: 210, currency: 'USD' },
+          { name: 'Комплект прокладок выхлопной системы', price_min: 25, price_max: 45, currency: 'USD' },
         ];
 
     const laborMin = brakeFocused ? 120 : 180;
@@ -299,10 +302,10 @@ ${JSON.stringify(input.diagnosis)}`;
     const partsMax = parts.reduce((sum, part) => sum + part.price_max, 0);
 
     return {
-      problem: brakeFocused ? 'Worn Brake Components' : 'Exhaust Efficiency Fault',
+      problem: brakeFocused ? 'Износ тормозных компонентов' : 'Неисправность выхлопной системы',
       description: brakeFocused
-        ? 'The uploaded evidence suggests worn brake pads and possibly scored rotors, which can reduce stopping power and create scraping or rattling noises.'
-        : 'The uploaded evidence suggests an exhaust or emissions issue, often associated with reduced efficiency and warning lights such as code P0420.',
+        ? 'Загруженные данные указывают на износ тормозных колодок и возможное повреждение дисков, что снижает эффективность торможения и вызывает скрип или дребезжание.'
+        : 'Загруженные данные указывают на проблему с выхлопной системой или токсичностью отработавших газов, что часто сопровождается снижением мощности и индикатором ошибки P0420.',
       severity: brakeFocused ? 'high' : 'medium',
       parts_needed: parts,
       labor_cost_min: laborMin,
@@ -347,13 +350,13 @@ ${JSON.stringify(input.diagnosis)}`;
       overcharge_percent: overchargePercent,
       explanation:
         verdict === 'overpriced'
-          ? 'The mechanic quote is above the expected repair range based on parts and labor.'
+          ? 'Смета механика превышает ожидаемый диапазон стоимости ремонта с учётом запчастей и работы.'
           : verdict === 'underpriced'
-            ? 'The quote is lower than the expected range, which may reflect discounts or omitted items.'
-            : 'The quote falls within the expected repair range for this diagnosis.',
+            ? 'Смета ниже ожидаемого диапазона, что может объясняться скидками или пропущенными позициями.'
+            : 'Смета находится в пределах ожидаемого диапазона стоимости для данной диагностики.',
       suspicious_items:
         verdict === 'overpriced'
-          ? ['Labor marked above standard range', 'Parts total exceeds expected estimate']
+          ? ['Стоимость работ выше стандартного диапазона', 'Сумма за запчасти превышает расчётную']
           : [],
     };
   }
