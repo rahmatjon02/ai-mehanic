@@ -17,9 +17,11 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /var/www/ai-mehanic/backend
-            git -C /var/www/ai-mehanic pull origin master
+            git -C /var/www/ai-mehanic fetch origin master
+            git -C /var/www/ai-mehanic reset --hard origin/master
             npm install --prefix /var/www/ai-mehanic/backend
+            cd /var/www/ai-mehanic/backend && npx prisma db push
+            cd /var/www/ai-mehanic/backend && npx prisma generate
             npm run build --prefix /var/www/ai-mehanic/backend
             PORT=3006 pm2 restart ai-mechanic --update-env
             pm2 save
