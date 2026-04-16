@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
 import {
+  AuthResult,
+  Car,
   DiagnosisDetail,
   DiagnosisListItem,
   DiagnosisResult,
@@ -8,10 +10,12 @@ import {
   QuoteResult,
   UploadAsset,
   UploadType,
+  User,
+  VinDecodeResult,
 } from '../types';
 
 const api = axios.create({
-  baseURL: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000',
+  baseURL: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3006',
   timeout: 60000,
 });
 
@@ -19,6 +23,15 @@ interface ApiResponse<T> {
   success: boolean;
   data: T;
   error?: string;
+}
+
+/** Injected by AuthContext after login so every request carries the token. */
+export function setAuthToken(token: string | null) {
+  if (token) {
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  } else {
+    delete api.defaults.headers.common['Authorization'];
+  }
 }
 
 async function appendUploadAsset(formData: FormData, fieldName: string, file: UploadAsset) {
@@ -40,55 +53,106 @@ async function unwrap<T>(promise: Promise<{ data: ApiResponse<T> }>) {
   try {
     const response = await promise;
     if (!response.data.success) {
-      throw new Error(response.data.error ?? 'API request failed');
+      throw new Error(response.data.error ?? 'Ошибка API запроса');
     }
-
     return response.data.data;
   } catch (error: any) {
     const apiMessage =
       error?.response?.data?.error ??
       error?.response?.data?.message ??
       error?.message ??
-      'API request failed';
+      'Ошибка API запроса';
     throw new Error(apiMessage);
   }
 }
 
 export const apiService = {
-  async analyzeProblem(file: UploadAsset, type: UploadType) {
+  // ─── Auth ───────────────────────────────────────────────────────────────────
+
+  register(email: string, password: string, name: string) {
+    return unwrap<AuthResult>(
+      api.post('auth/register', { email, password, name }),
+    );
+  },
+
+  login(email: string, password: string) {
+    return unwrap<AuthResult>(
+      api.post('auth/login', { email, password }),
+    );
+  },
+
+  googleAuth(accessToken: string) {
+    return unwrap<AuthResult>(
+      api.post('auth/google', { accessToken }),
+    );
+  },
+
+  getProfile() {
+    return unwrap<User>(api.get('auth/profile'));
+  },
+
+  updateProfile(data: { name?: string; avatar?: string }) {
+    return unwrap<User>(api.patch('auth/profile', data));
+  },
+
+  // ─── Diagnosis ──────────────────────────────────────────────────────────────
+
+  async analyzeProblem(file: UploadAsset, type: UploadType, carId?: string) {
     const formData = new FormData();
     await appendUploadAsset(formData, 'file', file);
+    if (carId) formData.append('carId', carId);
 
     return unwrap<DiagnosisResult & { diagnosisId: string }>(
-      api.post(`/diagnosis/analyze?type=${type}`, formData),
+      api.post(`diagnosis/analyze?type=${type}`, formData),
     );
   },
 
   async checkQuote(diagnosisId: string, options: { file?: UploadAsset; quoteText?: string }) {
     const formData = new FormData();
-
-    if (options.file) {
-      await appendUploadAsset(formData, 'file', options.file);
-    }
-
-    if (options.quoteText) {
-      formData.append('quoteText', options.quoteText);
-    }
+    if (options.file) await appendUploadAsset(formData, 'file', options.file);
+    if (options.quoteText) formData.append('quoteText', options.quoteText);
 
     return unwrap<QuoteResult>(
-      api.post(`/quote/check/${diagnosisId}`, formData),
+      api.post(`quote/check/${diagnosisId}`, formData),
     );
   },
 
   getPrices(diagnosisId: string) {
-    return unwrap<PricesResponse>(api.get(`/prices/${diagnosisId}`));
+    return unwrap<PricesResponse>(api.get(`prices/${diagnosisId}`));
   },
 
   getHistory(limit = 20) {
-    return unwrap<DiagnosisListItem[]>(api.get(`/diagnosis?limit=${limit}`));
+    return unwrap<DiagnosisListItem[]>(api.get(`diagnosis?limit=${limit}`));
   },
 
   getDiagnosis(diagnosisId: string) {
-    return unwrap<DiagnosisDetail>(api.get(`/diagnosis/${diagnosisId}`));
+    return unwrap<DiagnosisDetail>(api.get(`diagnosis/${diagnosisId}`));
+  },
+
+  // ─── Cars ───────────────────────────────────────────────────────────────────
+
+  getCars() {
+    return unwrap<Car[]>(api.get('cars'));
+  },
+
+  createCar(data: {
+    vin?: string;
+    make: string;
+    model: string;
+    year: number;
+    bodyType?: string;
+    engineSize?: string;
+  }) {
+    return unwrap<Car>(api.post('cars', data));
+  },
+
+  deleteCar(carId: string) {
+    return unwrap<{ id: string }>(api.delete(`cars/${carId}`));
+  },
+
+  // ─── VIN ────────────────────────────────────────────────────────────────────
+
+  decodeVin(vin: string) {
+    return unwrap<VinDecodeResult>(api.post('vin/decode', { vin }));
   },
 };

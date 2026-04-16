@@ -26,7 +26,7 @@ async function bootstrap() {
     },
   });
 
-  const port = Number(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT ?? 3006);
   await app.listen(port);
 
   const appUrl = await app.getUrl();
@@ -39,4 +39,5 @@ async function bootstrap() {
   console.log(`Backend URL: ${publicAppUrl}`);
   console.log(`Swagger URL: ${swaggerUrl}`);
 }
-bootstrap();
+
+void bootstrap();

@@ -2,6 +2,46 @@ export type Severity = 'low' | 'medium' | 'high';
 export type Verdict = 'fair' | 'overpriced' | 'underpriced';
 export type UploadType = 'image' | 'audio' | 'video';
 
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatar: string | null;
+  createdAt?: string;
+  _count?: { diagnoses: number };
+}
+
+export interface AuthResult {
+  access_token: string;
+  user: User;
+}
+
+// ─── Cars ─────────────────────────────────────────────────────────────────────
+
+export interface Car {
+  id: string;
+  userId: string;
+  vin?: string;
+  make: string;
+  model: string;
+  year: number;
+  bodyType?: string;
+  engineSize?: string;
+  createdAt: string;
+}
+
+export interface VinDecodeResult {
+  make: string;
+  model: string;
+  year: string;
+  bodyType: string;
+  engineSize: string;
+}
+
+// ─── Diagnosis ────────────────────────────────────────────────────────────────
+
 export interface PartEstimate {
   name: string;
   price_min: number;
@@ -31,6 +71,8 @@ export interface DiagnosisListItem {
   totalMin: number;
   totalMax: number;
   createdAt: string;
+  userId?: string;
+  carId?: string;
 }
 
 export interface DiagnosisDetail {
@@ -38,6 +80,8 @@ export interface DiagnosisDetail {
   fileType: UploadType;
   filePath: string;
   createdAt: string;
+  userId?: string;
+  carId?: string;
   result: DiagnosisResult;
   quotes: QuoteResult[];
 }
@@ -52,6 +96,8 @@ export interface QuoteResult {
   explanation: string;
   suspicious_items: string[];
 }
+
+// ─── Prices ───────────────────────────────────────────────────────────────────
 
 export interface PriceSource {
   store: string;
@@ -69,6 +115,8 @@ export interface PricesResponse {
   parts: PartPrice[];
 }
 
+// ─── Upload ───────────────────────────────────────────────────────────────────
+
 export interface UploadAsset {
   uri: string;
   name: string;
@@ -81,6 +129,13 @@ export interface ObdReading {
   confidenceBoost: number;
 }
 
+// ─── Navigation ───────────────────────────────────────────────────────────────
+
+export type AuthStackParamList = {
+  Login: undefined;
+  Register: undefined;
+};
+
 export type RootStackParamList = {
   MainTabs: undefined;
   Diagnosis:
@@ -89,18 +144,18 @@ export type RootStackParamList = {
         inputType?: UploadType;
         diagnosisId?: string;
         obdReading?: ObdReading | null;
+        carId?: string;
       }
     | undefined;
-  Quote: {
-    diagnosisId: string;
-  };
-  Prices: {
-    diagnosisId: string;
-  };
+  Quote: { diagnosisId: string };
+  Prices: { diagnosisId: string };
   OBD: undefined;
+  VIN: undefined;
 };
 
 export type MainTabParamList = {
   Home: undefined;
   History: undefined;
+  Profile: undefined;
+  VINTab: undefined;
 };

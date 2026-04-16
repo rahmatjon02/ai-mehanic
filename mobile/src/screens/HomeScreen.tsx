@@ -18,10 +18,17 @@ import {
 } from 'react-native';
 import { GradientCard } from '../components/GradientCard';
 import { SeverityBadge } from '../components/StatusBadge';
+import { useAuth } from '../context/auth-context';
 import { useObd } from '../context/obd-context';
 import { apiService } from '../services/api';
 import { theme } from '../theme';
-import { DiagnosisListItem, MainTabParamList, RootStackParamList, UploadAsset } from '../types';
+import {
+  Car,
+  DiagnosisListItem,
+  MainTabParamList,
+  RootStackParamList,
+  UploadAsset,
+} from '../types';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, 'Home'>,
@@ -29,10 +36,13 @@ type Props = CompositeScreenProps<
 >;
 
 export function HomeScreen({ navigation }: Props) {
+  const { cars } = useAuth();
   const [recent, setRecent] = useState<DiagnosisListItem[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingActive, setRecordingActive] = useState(false);
+  const [selectedCar, setSelectedCar] = useState<Car | null>(null);
+  const [carPickerOpen, setCarPickerOpen] = useState(false);
   const { useObdData, setUseObdData, latestReading } = useObd();
 
   const loadRecent = useCallback(async () => {
@@ -40,8 +50,8 @@ export function HomeScreen({ navigation }: Props) {
       setLoadingRecent(true);
       const history = await apiService.getHistory(3);
       setRecent(history);
-    } catch (error) {
-      Alert.alert('Ошибка API', (error as Error).message);
+    } catch {
+      // Silent fail — user may not be logged in
     } finally {
       setLoadingRecent(false);
     }
@@ -58,6 +68,7 @@ export function HomeScreen({ navigation }: Props) {
       upload,
       inputType,
       obdReading: useObdData ? latestReading : null,
+      carId: selectedCar?.id,
     });
   };
 
@@ -73,17 +84,11 @@ export function HomeScreen({ navigation }: Props) {
       quality: 0.8,
     });
 
-    if (result.canceled) {
-      return;
-    }
+    if (result.canceled) return;
 
     const asset = result.assets[0];
     navigateToDiagnosis(
-      {
-        uri: asset.uri,
-        name: asset.fileName ?? 'car-photo.jpg',
-        mimeType: asset.mimeType ?? 'image/jpeg',
-      },
+      { uri: asset.uri, name: asset.fileName ?? 'car-photo.jpg', mimeType: asset.mimeType ?? 'image/jpeg' },
       'image',
     );
   };
@@ -95,17 +100,11 @@ export function HomeScreen({ navigation }: Props) {
       multiple: false,
     });
 
-    if (result.canceled) {
-      return;
-    }
+    if (result.canceled) return;
 
     const asset = result.assets[0];
     navigateToDiagnosis(
-      {
-        uri: asset.uri,
-        name: asset.name,
-        mimeType: asset.mimeType ?? 'video/mp4',
-      },
+      { uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? 'video/mp4' },
       'video',
     );
   };
@@ -118,10 +117,7 @@ export function HomeScreen({ navigation }: Props) {
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
 
       const { recording: nextRecording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
@@ -141,21 +137,20 @@ export function HomeScreen({ navigation }: Props) {
       return;
     }
 
-    navigateToDiagnosis(
-      {
-        uri,
-        name: 'voice-note.m4a',
-        mimeType: 'audio/mp4',
-      },
-      'audio',
-    );
+    navigateToDiagnosis({ uri, name: 'voice-note.m4a', mimeType: 'audio/mp4' }, 'audio');
   };
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={loadingRecent} onRefresh={loadRecent} tintColor={theme.colors.primary} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={loadingRecent}
+          onRefresh={loadRecent}
+          tintColor={theme.colors.primary}
+        />
+      }
     >
       <GradientCard style={styles.hero}>
         <View style={styles.heroRow}>
@@ -167,6 +162,57 @@ export function HomeScreen({ navigation }: Props) {
         </View>
       </GradientCard>
 
+      {/* Car selector — only shown when user has saved cars */}
+      {cars.length > 0 ? (
+        <GradientCard>
+          <Text style={styles.sectionTitle}>Выбрать машину</Text>
+          <Pressable
+            style={styles.carSelector}
+            onPress={() => setCarPickerOpen((v) => !v)}
+          >
+            <Text style={styles.carSelectorText}>
+              {selectedCar
+                ? `${selectedCar.make} ${selectedCar.model} ${selectedCar.year}`
+                : 'Без привязки к машине'}
+            </Text>
+            <Ionicons
+              name={carPickerOpen ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={theme.colors.textMuted}
+            />
+          </Pressable>
+
+          {carPickerOpen ? (
+            <View style={styles.carList}>
+              <Pressable
+                style={[styles.carOption, !selectedCar && styles.carOptionActive]}
+                onPress={() => { setSelectedCar(null); setCarPickerOpen(false); }}
+              >
+                <Text style={styles.carOptionText}>Без привязки к машине</Text>
+              </Pressable>
+              {cars.map((car) => (
+                <Pressable
+                  key={car.id}
+                  style={[
+                    styles.carOption,
+                    selectedCar?.id === car.id && styles.carOptionActive,
+                  ]}
+                  onPress={() => { setSelectedCar(car); setCarPickerOpen(false); }}
+                >
+                  <Text style={styles.carOptionText}>
+                    {car.make} {car.model} {car.year}
+                  </Text>
+                  {car.vin ? (
+                    <Text style={styles.carOptionVin}>{car.vin}</Text>
+                  ) : null}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </GradientCard>
+      ) : null}
+
+      {/* OBD card */}
       <GradientCard>
         <View style={styles.toggleRow}>
           <View style={styles.toggleText}>
@@ -208,6 +254,10 @@ export function HomeScreen({ navigation }: Props) {
         <Text style={styles.sectionTitle}>Последние диагностики</Text>
       </View>
 
+      {recent.length === 0 ? (
+        <Text style={styles.mutedText}>Диагностик ещё нет.</Text>
+      ) : null}
+
       {recent.map((item) => (
         <Pressable
           key={item.id}
@@ -222,7 +272,7 @@ export function HomeScreen({ navigation }: Props) {
               {item.description}
             </Text>
             <Text style={styles.priceText}>
-              ${item.totalMin} - ${item.totalMax}
+              ${item.totalMin} — ${item.totalMax}
             </Text>
           </GradientCard>
         </Pressable>
@@ -232,64 +282,24 @@ export function HomeScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    gap: theme.spacing.md,
-  },
-  hero: {
-    paddingVertical: 24,
-  },
-  heroRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  title: {
-    color: theme.colors.text,
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  subtitle: {
-    color: theme.colors.textMuted,
-    marginTop: 6,
-    fontSize: 15,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-  },
-  toggleText: {
-    flex: 1,
-  },
-  sectionHeader: {
-    marginTop: 8,
-  },
-  sectionTitle: {
-    color: theme.colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  mutedText: {
-    color: theme.colors.textMuted,
-    lineHeight: 20,
-  },
+  container: { flex: 1, backgroundColor: theme.colors.background },
+  content: { padding: theme.spacing.lg, gap: theme.spacing.md },
+  hero: { paddingVertical: 24 },
+  heroRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { color: theme.colors.text, fontSize: 32, fontWeight: '800' },
+  subtitle: { color: theme.colors.textMuted, marginTop: 6, fontSize: 15 },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  toggleText: { flex: 1 },
+  sectionHeader: { marginTop: 8 },
+  sectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700' },
+  mutedText: { color: theme.colors.textMuted, lineHeight: 20 },
   primaryButton: {
     backgroundColor: theme.colors.primary,
     borderRadius: theme.radius,
     paddingVertical: 18,
     alignItems: 'center',
   },
-  primaryButtonText: {
-    color: theme.colors.text,
-    fontWeight: '800',
-    fontSize: 18,
-  },
+  primaryButtonText: { color: theme.colors.text, fontWeight: '800', fontSize: 18 },
   secondaryButton: {
     marginTop: theme.spacing.md,
     paddingVertical: 12,
@@ -299,32 +309,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#191919',
   },
-  secondaryButtonText: {
-    color: theme.colors.text,
-    fontWeight: '700',
-  },
-  recentCard: {
-    gap: 10,
-  },
-  cardHeader: {
+  secondaryButtonText: { color: theme.colors.text, fontWeight: '700' },
+  recentCard: { gap: 10 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' },
+  cardTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700', flex: 1 },
+  priceText: { color: theme.colors.warning, fontSize: 16, fontWeight: '700' },
+  obdHint: { color: theme.colors.success, marginTop: theme.spacing.sm },
+  // Car selector
+  carSelector: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 12,
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    backgroundColor: '#131313',
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 14,
+    marginTop: 8,
   },
-  cardTitle: {
-    color: theme.colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-    flex: 1,
+  carSelectorText: { color: theme.colors.text, fontSize: 15 },
+  carList: { marginTop: 8, gap: 4 },
+  carOption: {
+    padding: 12,
+    borderRadius: theme.radius,
+    backgroundColor: '#191919',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
   },
-  priceText: {
-    color: theme.colors.warning,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  obdHint: {
-    color: theme.colors.success,
-    marginTop: theme.spacing.sm,
-  },
+  carOptionActive: { borderColor: theme.colors.primary },
+  carOptionText: { color: theme.colors.text, fontWeight: '600' },
+  carOptionVin: { color: theme.colors.textMuted, fontSize: 12, marginTop: 2 },
 });

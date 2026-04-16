@@ -13,6 +13,7 @@ import {
 import { GradientCard } from '../components/GradientCard';
 import { LoaderDots } from '../components/LoaderDots';
 import { SeverityBadge } from '../components/StatusBadge';
+import { useAuth } from '../context/auth-context';
 import { apiService } from '../services/api';
 import { theme } from '../theme';
 import { DiagnosisListItem, MainTabParamList, RootStackParamList } from '../types';
@@ -23,10 +24,16 @@ type Props = CompositeScreenProps<
 >;
 
 export function HistoryScreen({ navigation }: Props) {
+  const { token } = useAuth();
   const [history, setHistory] = useState<DiagnosisListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadHistory = useCallback(async () => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const result = await apiService.getHistory(20);
       setHistory(result);
@@ -35,7 +42,7 @@ export function HistoryScreen({ navigation }: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   useFocusEffect(
     useCallback(() => {
@@ -44,18 +51,39 @@ export function HistoryScreen({ navigation }: Props) {
     }, [loadHistory]),
   );
 
+  if (!token) {
+    return (
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <Text style={styles.title}>История диагностик</Text>
+        <GradientCard>
+          <Text style={styles.emptyText}>
+            Войдите в аккаунт, чтобы видеть историю своих диагностик.
+          </Text>
+        </GradientCard>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={loadHistory} tintColor={theme.colors.primary} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={loading}
+          onRefresh={loadHistory}
+          tintColor={theme.colors.primary}
+        />
+      }
     >
       <Text style={styles.title}>История диагностик</Text>
       {loading ? <LoaderDots label="Загружаем прошлые диагностики..." /> : null}
 
       {!loading && history.length === 0 ? (
         <GradientCard>
-          <Text style={styles.emptyText}>Диагностик пока нет. Начни с вкладки «Главная».</Text>
+          <Text style={styles.emptyText}>
+            Диагностик пока нет. Начни с вкладки «Главная».
+          </Text>
         </GradientCard>
       ) : null}
 
@@ -71,7 +99,7 @@ export function HistoryScreen({ navigation }: Props) {
               {item.description}
             </Text>
             <Text style={styles.meta}>
-              {new Date(item.createdAt).toLocaleString()} • ${item.totalMin} - ${item.totalMax}
+              {new Date(item.createdAt).toLocaleString('ru-RU')} • ${item.totalMin} — ${item.totalMax}
             </Text>
           </GradientCard>
         </Pressable>
@@ -81,37 +109,12 @@ export function HistoryScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    gap: theme.spacing.md,
-  },
-  title: {
-    color: theme.colors.text,
-    fontSize: 28,
-    fontWeight: '800',
-  },
-  historyCard: {
-    gap: 10,
-  },
-  problem: {
-    color: theme.colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-    flex: 1,
-  },
-  description: {
-    color: theme.colors.textMuted,
-  },
-  meta: {
-    color: theme.colors.warning,
-    fontWeight: '700',
-  },
-  emptyText: {
-    color: theme.colors.textMuted,
-    textAlign: 'center',
-  },
+  container: { flex: 1, backgroundColor: theme.colors.background },
+  content: { padding: theme.spacing.lg, gap: theme.spacing.md },
+  title: { color: theme.colors.text, fontSize: 28, fontWeight: '800' },
+  historyCard: { gap: 10 },
+  problem: { color: theme.colors.text, fontSize: 18, fontWeight: '700', flex: 1 },
+  description: { color: theme.colors.textMuted },
+  meta: { color: theme.colors.warning, fontWeight: '700' },
+  emptyText: { color: theme.colors.textMuted, textAlign: 'center' },
 });

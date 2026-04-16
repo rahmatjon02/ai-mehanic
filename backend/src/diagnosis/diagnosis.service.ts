@@ -10,7 +10,12 @@ export class DiagnosisService {
     private readonly aiService: AiService,
   ) {}
 
-  async analyze(file: Express.Multer.File, explicitType?: string) {
+  async analyze(
+    file: Express.Multer.File,
+    explicitType?: string,
+    userId?: string,
+    carId?: string,
+  ) {
     const fileType = file.mimetype.startsWith('image/')
       ? 'image'
       : file.mimetype.startsWith('audio/')
@@ -35,6 +40,8 @@ export class DiagnosisService {
         severity: result.severity,
         totalMin: result.total_cost_min,
         totalMax: result.total_cost_max,
+        userId: userId ?? null,
+        carId: carId ?? null,
       },
     });
 
@@ -44,21 +51,26 @@ export class DiagnosisService {
     };
   }
 
-  async list(limit = 20) {
+  async list(limit = 20, userId?: string) {
+    const where = userId ? { userId } : {};
+
     const diagnoses = await this.prisma.diagnosis.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
 
-    return diagnoses.map((diagnosis) => ({
-      id: diagnosis.id,
-      fileType: diagnosis.fileType,
-      problem: diagnosis.problem,
-      description: diagnosis.description,
-      severity: diagnosis.severity,
-      totalMin: diagnosis.totalMin,
-      totalMax: diagnosis.totalMax,
-      createdAt: diagnosis.createdAt,
+    return diagnoses.map((d) => ({
+      id: d.id,
+      fileType: d.fileType,
+      problem: d.problem,
+      description: d.description,
+      severity: d.severity,
+      totalMin: d.totalMin,
+      totalMax: d.totalMax,
+      createdAt: d.createdAt,
+      userId: d.userId,
+      carId: d.carId,
     }));
   }
 
@@ -77,6 +89,8 @@ export class DiagnosisService {
       fileType: diagnosis.fileType,
       filePath: diagnosis.filePath,
       createdAt: diagnosis.createdAt,
+      userId: diagnosis.userId,
+      carId: diagnosis.carId,
       result: JSON.parse(diagnosis.rawResult) as DiagnosisResult,
       quotes: diagnosis.quotes,
     };

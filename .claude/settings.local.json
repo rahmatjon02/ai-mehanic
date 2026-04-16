@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx expo:*)",
+      "Bash(npx prisma:*)",
+      "Bash(taskkill /f /im node.exe)",
+      "Bash(pkill -f \"node\")",
+      "Bash(node -e ':*)",
+      "Bash(node -e \"try { const p = require\\('./node_modules/expo/package.json'\\); console.log\\('expo installed:', p.version\\); } catch\\(e\\) { console.log\\('not installed'\\); }\")"
+    ]
+  }
+}

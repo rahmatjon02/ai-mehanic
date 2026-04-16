@@ -52,7 +52,11 @@ export function DiagnosisScreen({ navigation, route }: Props) {
           throw new Error('Не переданы данные для загрузки.');
         }
 
-        const diagnosis = await apiService.analyzeProblem(route.params.upload, route.params.inputType);
+        const diagnosis = await apiService.analyzeProblem(
+          route.params.upload,
+          route.params.inputType,
+          route.params.carId,
+        );
         if (!active) {
           return;
         }

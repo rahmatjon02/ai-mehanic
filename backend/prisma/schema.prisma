@@ -7,8 +7,38 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id        String      @id @default(uuid())
+  email     String      @unique
+  name      String
+  avatar    String?
+  googleId  String?     @unique
+  password  String?
+  createdAt DateTime    @default(now())
+  diagnoses Diagnosis[]
+  cars      Car[]
+}
+
+model Car {
+  id         String      @id @default(uuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vin        String?
+  make       String
+  model      String
+  year       Int
+  bodyType   String?
+  engineSize String?
+  createdAt  DateTime    @default(now())
+  diagnoses  Diagnosis[]
+}
+
 model Diagnosis {
   id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  carId       String?
+  car         Car?     @relation(fields: [carId], references: [id], onDelete: SetNull)
   fileType    String
   filePath    String
   rawResult   String
@@ -22,15 +52,15 @@ model Diagnosis {
 }
 
 model Quote {
-  id              String    @id @default(uuid())
-  diagnosisId     String
-  diagnosis       Diagnosis @relation(fields: [diagnosisId], references: [id])
-  filePath        String?
-  mechanicTotal   Float
-  verdict         String
-  overchargeAmt   Float
-  overchargePct   Float
-  explanation     String
-  rawResult       String
-  createdAt       DateTime  @default(now())
+  id            String    @id @default(uuid())
+  diagnosisId   String
+  diagnosis     Diagnosis @relation(fields: [diagnosisId], references: [id], onDelete: Cascade)
+  filePath      String?
+  mechanicTotal Float
+  verdict       String
+  overchargeAmt Float
+  overchargePct Float
+  explanation   String
+  rawResult     String
+  createdAt     DateTime  @default(now())
 }

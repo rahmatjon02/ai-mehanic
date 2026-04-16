@@ -16,7 +16,9 @@ export class QuoteService {
     file?: Express.Multer.File;
     quoteText?: string;
   }) {
-    const diagnosis = await this.diagnosisService.getStoredDiagnosis(input.diagnosisId);
+    const diagnosis = await this.diagnosisService.getStoredDiagnosis(
+      input.diagnosisId,
+    );
     const result = await this.aiService.compareQuote({
       diagnosis: diagnosis.result,
       quoteText: input.quoteText,

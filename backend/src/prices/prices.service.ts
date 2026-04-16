@@ -6,7 +6,8 @@ export class PricesService {
   constructor(private readonly diagnosisService: DiagnosisService) {}
 
   async getPrices(diagnosisId: string) {
-    const diagnosis = await this.diagnosisService.getStoredDiagnosis(diagnosisId);
+    const diagnosis =
+      await this.diagnosisService.getStoredDiagnosis(diagnosisId);
 
     return {
       parts: diagnosis.result.parts_needed.map((part, index) => {

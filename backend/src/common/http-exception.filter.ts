@@ -36,7 +36,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (typeof payload === 'object' && payload && 'message' in payload) {
       const message = (payload as { message?: string | string[] }).message;
-      return Array.isArray(message) ? message.join(', ') : (message ?? exception.message);
+      return Array.isArray(message)
+        ? message.join(', ')
+        : (message ?? exception.message);
     }
 
     return exception.message;

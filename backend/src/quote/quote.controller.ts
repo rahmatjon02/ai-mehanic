@@ -26,7 +26,9 @@ import { QuoteService } from './quote.service';
 export class QuoteController {
   constructor(private readonly quoteService: QuoteService) {}
 
-  @ApiOperation({ summary: 'Compare mechanic quote against diagnosis estimate' })
+  @ApiOperation({
+    summary: 'Compare mechanic quote against diagnosis estimate',
+  })
   @ApiParam({ name: 'diagnosisId', required: true })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

@@ -10,10 +10,7 @@ import { lookup as lookupMime } from 'mime-types';
 import { readFile } from 'fs/promises';
 import { basename } from 'path';
 import { safeJsonParse } from './json.util';
-import {
-  DiagnosisResult,
-  QuoteComparisonResult,
-} from './types';
+import { DiagnosisResult, QuoteComparisonResult } from './types';
 
 const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic. Analyze this car problem.
 
@@ -79,7 +76,8 @@ export class AiService {
   constructor(private readonly configService: ConfigService) {
     this.geminiApiKey = this.configService.get<string>('GEMINI_API_KEY') ?? '';
     this.geminiModel =
-      this.configService.get<string>('GEMINI_MODEL')?.trim() || 'gemini-2.0-flash';
+      this.configService.get<string>('GEMINI_MODEL')?.trim() ||
+      'gemini-2.0-flash';
     this.openAiApiKey = this.configService.get<string>('OPENAI_API_KEY') ?? '';
   }
 
@@ -90,7 +88,10 @@ export class AiService {
   }): Promise<DiagnosisResult> {
     try {
       if (input.fileType === 'audio') {
-        const transcript = await this.transcribeAudio(input.filePath, input.mimeType);
+        const transcript = await this.transcribeAudio(
+          input.filePath,
+          input.mimeType,
+        );
         return await this.generateDiagnosisFromText(transcript);
       }
 
@@ -119,7 +120,10 @@ export class AiService {
   }): Promise<QuoteComparisonResult> {
     try {
       if (input.quoteText?.trim()) {
-        return this.buildQuoteComparisonFromText(input.quoteText, input.diagnosis);
+        return this.buildQuoteComparisonFromText(
+          input.quoteText,
+          input.diagnosis,
+        );
       }
 
       if (!input.filePath || !input.mimeType || !this.canUseGemini()) {
@@ -139,11 +143,16 @@ ${JSON.stringify(input.diagnosis)}`;
       return this.normalizeQuoteComparison(response, input.diagnosis);
     } catch (error) {
       this.logger.warn(`Quote fallback used: ${(error as Error).message}`);
-      return this.buildQuoteComparisonFromText(input.quoteText ?? '', input.diagnosis);
+      return this.buildQuoteComparisonFromText(
+        input.quoteText ?? '',
+        input.diagnosis,
+      );
     }
   }
 
-  private async generateDiagnosisFromText(text: string): Promise<DiagnosisResult> {
+  private async generateDiagnosisFromText(
+    text: string,
+  ): Promise<DiagnosisResult> {
     if (!this.canUseGemini()) {
       return this.buildMockDiagnosis('audio', text);
     }
@@ -155,12 +164,17 @@ ${JSON.stringify(input.diagnosis)}`;
 
       return this.normalizeDiagnosis(response);
     } catch (error) {
-      this.logger.warn(`Text diagnosis fallback used: ${(error as Error).message}`);
+      this.logger.warn(
+        `Text diagnosis fallback used: ${(error as Error).message}`,
+      );
       return this.buildMockDiagnosis('audio', text);
     }
   }
 
-  private async transcribeAudio(filePath: string, mimeType: string): Promise<string> {
+  private async transcribeAudio(
+    filePath: string,
+    mimeType: string,
+  ): Promise<string> {
     if (!this.canUseOpenAi()) {
       return 'Customer reports rattling noise near the front brakes and reduced stopping performance.';
     }
@@ -169,7 +183,7 @@ ${JSON.stringify(input.diagnosis)}`;
       const openai = new OpenAI({ apiKey: this.openAiApiKey });
       const buffer = await readFile(filePath);
       const file = await toFile(buffer, basename(filePath), {
-        type: mimeType || (lookupMime(filePath) || 'audio/mpeg'),
+        type: mimeType || lookupMime(filePath) || 'audio/mpeg',
       });
       const transcript = await openai.audio.transcriptions.create({
         file,
@@ -178,7 +192,9 @@ ${JSON.stringify(input.diagnosis)}`;
 
       return transcript.text;
     } catch (error) {
-      this.logger.warn(`Transcription fallback used: ${(error as Error).message}`);
+      this.logger.warn(
+        `Transcription fallback used: ${(error as Error).message}`,
+      );
       return 'Customer reports rattling noise near the front brakes and reduced stopping performance.';
     }
   }
@@ -193,9 +209,7 @@ ${JSON.stringify(input.diagnosis)}`;
     }
 
     const gemini = new GoogleGenerativeAI(this.geminiApiKey);
-    const parts: Part[] = [
-      { text: input.prompt },
-    ];
+    const parts: Part[] = [{ text: input.prompt }];
 
     if (input.filePath && input.mimeType) {
       const data = await readFile(input.filePath);
@@ -224,7 +238,9 @@ ${JSON.stringify(input.diagnosis)}`;
         return safeJsonParse<T>(text);
       } catch (error) {
         lastError = error as Error;
-        this.logger.warn(`Gemini model ${modelName} failed: ${lastError.message}`);
+        this.logger.warn(
+          `Gemini model ${modelName} failed: ${lastError.message}`,
+        );
 
         const message = lastError.message.toLowerCase();
         const shouldTryNextModel =
@@ -271,12 +287,18 @@ ${JSON.stringify(input.diagnosis)}`;
   ): QuoteComparisonResult {
     return {
       mechanic_total: Number(result.mechanic_total ?? diagnosis.total_cost_max),
-      fair_estimate_min: Number(result.fair_estimate_min ?? diagnosis.total_cost_min),
-      fair_estimate_max: Number(result.fair_estimate_max ?? diagnosis.total_cost_max),
+      fair_estimate_min: Number(
+        result.fair_estimate_min ?? diagnosis.total_cost_min,
+      ),
+      fair_estimate_max: Number(
+        result.fair_estimate_max ?? diagnosis.total_cost_max,
+      ),
       verdict: this.normalizeVerdict(result.verdict),
       overcharge_amount: Number(result.overcharge_amount ?? 0),
       overcharge_percent: Number(result.overcharge_percent ?? 0),
-      explanation: result.explanation ?? 'Смета сравнена с расчётным диапазоном стоимости ремонта.',
+      explanation:
+        result.explanation ??
+        'Смета сравнена с расчётным диапазоном стоимости ремонта.',
       suspicious_items: result.suspicious_items ?? [],
     };
   }
@@ -285,15 +307,36 @@ ${JSON.stringify(input.diagnosis)}`;
     fileType: 'image' | 'audio' | 'video',
     textHint = '',
   ): DiagnosisResult {
-    const brakeFocused = textHint.toLowerCase().includes('brake') || fileType !== 'video';
+    const brakeFocused =
+      textHint.toLowerCase().includes('brake') || fileType !== 'video';
     const parts = brakeFocused
       ? [
-          { name: 'Тормозные колодки', price_min: 40, price_max: 75, currency: 'USD' },
-          { name: 'Тормозные диски', price_min: 80, price_max: 140, currency: 'USD' },
+          {
+            name: 'Тормозные колодки',
+            price_min: 40,
+            price_max: 75,
+            currency: 'USD',
+          },
+          {
+            name: 'Тормозные диски',
+            price_min: 80,
+            price_max: 140,
+            currency: 'USD',
+          },
         ]
       : [
-          { name: 'Датчик каталитического нейтрализатора', price_min: 120, price_max: 210, currency: 'USD' },
-          { name: 'Комплект прокладок выхлопной системы', price_min: 25, price_max: 45, currency: 'USD' },
+          {
+            name: 'Датчик каталитического нейтрализатора',
+            price_min: 120,
+            price_max: 210,
+            currency: 'USD',
+          },
+          {
+            name: 'Комплект прокладок выхлопной системы',
+            price_min: 25,
+            price_max: 45,
+            currency: 'USD',
+          },
         ];
 
     const laborMin = brakeFocused ? 120 : 180;
@@ -302,7 +345,9 @@ ${JSON.stringify(input.diagnosis)}`;
     const partsMax = parts.reduce((sum, part) => sum + part.price_max, 0);
 
     return {
-      problem: brakeFocused ? 'Износ тормозных компонентов' : 'Неисправность выхлопной системы',
+      problem: brakeFocused
+        ? 'Износ тормозных компонентов'
+        : 'Неисправность выхлопной системы',
       description: brakeFocused
         ? 'Загруженные данные указывают на износ тормозных колодок и возможное повреждение дисков, что снижает эффективность торможения и вызывает скрип или дребезжание.'
         : 'Загруженные данные указывают на проблему с выхлопной системой или токсичностью отработавших газов, что часто сопровождается снижением мощности и индикатором ошибки P0420.',
@@ -335,7 +380,8 @@ ${JSON.stringify(input.diagnosis)}`;
       verdict = 'underpriced';
     }
 
-    const overchargeAmount = verdict === 'overpriced' ? mechanicTotal - fairMax : 0;
+    const overchargeAmount =
+      verdict === 'overpriced' ? mechanicTotal - fairMax : 0;
     const overchargePercent =
       verdict === 'overpriced' && fairMax > 0
         ? Number(((overchargeAmount / fairMax) * 100).toFixed(2))
@@ -356,7 +402,10 @@ ${JSON.stringify(input.diagnosis)}`;
             : 'Смета находится в пределах ожидаемого диапазона стоимости для данной диагностики.',
       suspicious_items:
         verdict === 'overpriced'
-          ? ['Стоимость работ выше стандартного диапазона', 'Сумма за запчасти превышает расчётную']
+          ? [
+              'Стоимость работ выше стандартного диапазона',
+              'Сумма за запчасти превышает расчётную',
+            ]
           : [],
     };
   }
@@ -378,10 +427,18 @@ ${JSON.stringify(input.diagnosis)}`;
   }
 
   private canUseGemini() {
-    return Boolean(this.geminiApiKey && this.geminiApiKey !== 'xxx' && process.env.NODE_ENV !== 'test');
+    return Boolean(
+      this.geminiApiKey &&
+      this.geminiApiKey !== 'xxx' &&
+      process.env.NODE_ENV !== 'test',
+    );
   }
 
   private canUseOpenAi() {
-    return Boolean(this.openAiApiKey && this.openAiApiKey !== 'xxx' && process.env.NODE_ENV !== 'test');
+    return Boolean(
+      this.openAiApiKey &&
+      this.openAiApiKey !== 'xxx' &&
+      process.env.NODE_ENV !== 'test',
+    );
   }
 }
