@@ -17,7 +17,7 @@ async function bootstrap() {
       'Backend API for diagnosis, quote comparison, prices, and history.',
     )
     .setVersion('1.0.0')
-    .addServer('/ai-mechanic')
+    .addServer('http://204.168.160.3/ai-mechanic')
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api-docs', app, swaggerDocument, {
