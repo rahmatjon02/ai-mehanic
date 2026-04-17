@@ -10,7 +10,11 @@ import { lookup as lookupMime } from 'mime-types';
 import { readFile } from 'fs/promises';
 import { basename } from 'path';
 import { safeJsonParse } from './json.util';
-import { DiagnosisResult, QuoteComparisonResult } from './types';
+import {
+  ChatPromptMessage,
+  DiagnosisResult,
+  QuoteComparisonResult,
+} from './types';
 
 const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic. Analyze this car problem.
 
@@ -65,6 +69,9 @@ const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechani
    "suspicious_items": ["item1", "item2"]
 
  }`;
+
+const CHAT_SYSTEM_PROMPT =
+  'You must respond only in Russian language. You are AI Mechanic, a helpful automotive assistant. Give practical, safe, concise advice. Ask for missing car details when needed. If the issue could be dangerous, recommend stopping driving and contacting a mechanic.';
 
 @Injectable()
 export class AiService {
@@ -147,6 +154,29 @@ ${JSON.stringify(input.diagnosis)}`;
         input.quoteText ?? '',
         input.diagnosis,
       );
+    }
+  }
+
+  async generateChatReply(messages: ChatPromptMessage[]): Promise<string> {
+    try {
+      if (!this.canUseGemini()) {
+        return this.buildMockChatReply(messages);
+      }
+
+      const conversation = messages
+        .map(
+          (message) =>
+            `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`,
+        )
+        .join('\n');
+      const response = await this.generateGeminiText({
+        prompt: `${CHAT_SYSTEM_PROMPT}\n\nConversation:\n${conversation}\n\nAssistant:`,
+      });
+
+      return response.trim() || this.buildMockChatReply(messages);
+    } catch (error) {
+      this.logger.warn(`Chat fallback used: ${(error as Error).message}`);
+      return this.buildMockChatReply(messages);
     }
   }
 
@@ -261,6 +291,52 @@ ${JSON.stringify(input.diagnosis)}`;
     }
 
     throw lastError ?? new Error('Gemini request failed');
+  }
+
+  private async generateGeminiText(input: { prompt: string }): Promise<string> {
+    if (!this.canUseGemini()) {
+      throw new InternalServerErrorException('Gemini API key is missing');
+    }
+
+    const gemini = new GoogleGenerativeAI(this.geminiApiKey);
+    const candidateModels = Array.from(
+      new Set([this.geminiModel, 'gemini-2.0-flash', 'gemini-2.0-flash-lite']),
+    );
+    let lastError: Error | null = null;
+
+    for (const modelName of candidateModels) {
+      try {
+        const model = gemini.getGenerativeModel({
+          model: modelName,
+          systemInstruction: CHAT_SYSTEM_PROMPT,
+        });
+        const result = await model.generateContent(input.prompt);
+        return result.response.text();
+      } catch (error) {
+        lastError = error as Error;
+        this.logger.warn(
+          `Gemini chat model ${modelName} failed: ${lastError.message}`,
+        );
+
+        const message = lastError.message.toLowerCase();
+        const shouldTryNextModel =
+          message.includes('404') ||
+          message.includes('not found') ||
+          message.includes('not supported') ||
+          message.includes('503') ||
+          message.includes('service unavailable') ||
+          message.includes('high demand') ||
+          message.includes('overloaded') ||
+          message.includes('429') ||
+          message.includes('quota');
+
+        if (!shouldTryNextModel) {
+          throw lastError;
+        }
+      }
+    }
+
+    throw lastError ?? new Error('Gemini chat request failed');
   }
 
   private normalizeDiagnosis(result: DiagnosisResult): DiagnosisResult {
@@ -408,6 +484,31 @@ ${JSON.stringify(input.diagnosis)}`;
             ]
           : [],
     };
+  }
+
+  private buildMockChatReply(messages: ChatPromptMessage[]): string {
+    const lastUserMessage =
+      [...messages].reverse().find((message) => message.role === 'user')
+        ?.content ?? '';
+    const lower = lastUserMessage.toLowerCase();
+
+    if (lower.includes('тормоз') || lower.includes('brake')) {
+      return 'Похоже на проблему с тормозной системой. Проверь уровень тормозной жидкости, состояние колодок и дисков. Если есть скрежет, провал педали или машина плохо тормозит, лучше не ехать дальше и обратиться в сервис.';
+    }
+
+    if (lower.includes('двиг') || lower.includes('engine')) {
+      return 'По двигателю сначала уточни симптомы: горит ли Check Engine, есть ли вибрация, дым, запах бензина, потеря мощности или коды OBD. Безопасный первый шаг — считать ошибки OBD и проверить уровень масла и охлаждающей жидкости.';
+    }
+
+    if (
+      lower.includes('цена') ||
+      lower.includes('смет') ||
+      lower.includes('cost')
+    ) {
+      return 'Опиши, какие работы и запчасти указаны в смете, а также итоговую сумму. Я сравню её с типичным диапазоном и отмечу подозрительные позиции.';
+    }
+
+    return 'Опиши симптомы подробнее: марка, модель, год, пробег, когда появляется проблема, есть ли звуки, запахи, вибрации или ошибки на панели. По этим данным я подскажу вероятные причины и следующий безопасный шаг.';
   }
 
   private normalizeSeverity(value?: string): DiagnosisResult['severity'] {

@@ -30,3 +30,10 @@ export interface QuoteComparisonResult {
   explanation: string;
   suspicious_items: string[];
 }
+
+export type ChatRole = 'user' | 'assistant';
+
+export interface ChatPromptMessage {
+  role: ChatRole;
+  content: string;
+}

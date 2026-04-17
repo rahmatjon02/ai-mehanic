@@ -3,7 +3,6 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/http-exception.filter';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
-
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({

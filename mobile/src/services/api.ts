@@ -3,11 +3,15 @@ import { Platform } from 'react-native';
 import {
   AuthResult,
   Car,
+  ChatSession,
+  ChatSessionDetail,
   DiagnosisDetail,
   DiagnosisListItem,
   DiagnosisResult,
+  HealthResult,
   PricesResponse,
   QuoteResult,
+  SendChatMessageResult,
   UploadAsset,
   UploadType,
   User,
@@ -67,6 +71,10 @@ async function unwrap<T>(promise: Promise<{ data: ApiResponse<T> }>) {
 }
 
 export const apiService = {
+  health() {
+    return unwrap<HealthResult>(api.get(''));
+  },
+
   // ─── Auth ───────────────────────────────────────────────────────────────────
 
   register(email: string, password: string, name: string) {
@@ -93,6 +101,36 @@ export const apiService = {
 
   updateProfile(data: { name?: string; avatar?: string }) {
     return unwrap<User>(api.patch('auth/profile', data));
+  },
+
+  getChatSessions(limit = 30) {
+    return unwrap<ChatSession[]>(api.get(`chat/sessions?limit=${limit}`));
+  },
+
+  createChatSession(title?: string) {
+    return unwrap<ChatSessionDetail>(api.post('chat/sessions', { title }));
+  },
+
+  getChatSession(sessionId: string) {
+    return unwrap<ChatSessionDetail>(api.get(`chat/sessions/${sessionId}`));
+  },
+
+  async sendChatMessage(
+    sessionId: string,
+    content: string,
+    file?: UploadAsset,
+  ) {
+    const formData = new FormData();
+    if (content.trim()) formData.append('content', content);
+    if (file) await appendUploadAsset(formData, 'file', file);
+
+    return unwrap<SendChatMessageResult>(
+      api.post(`chat/sessions/${sessionId}/messages`, formData),
+    );
+  },
+
+  deleteChatSession(sessionId: string) {
+    return unwrap<ChatSessionDetail>(api.delete(`chat/sessions/${sessionId}`));
   },
 
   // ─── Diagnosis ──────────────────────────────────────────────────────────────

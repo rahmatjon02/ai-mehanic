@@ -39,6 +39,7 @@ export function HomeScreen({ navigation }: Props) {
   const { cars } = useAuth();
   const [recent, setRecent] = useState<DiagnosisListItem[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingActive, setRecordingActive] = useState(false);
   const [selectedCar, setSelectedCar] = useState<Car | null>(null);
@@ -48,8 +49,16 @@ export function HomeScreen({ navigation }: Props) {
   const loadRecent = useCallback(async () => {
     try {
       setLoadingRecent(true);
-      const history = await apiService.getHistory(3);
-      setRecent(history);
+      const [health, history] = await Promise.allSettled([
+        apiService.health(),
+        apiService.getHistory(3),
+      ]);
+      setApiOnline(
+        health.status === 'fulfilled' && health.value.status === 'ok',
+      );
+      if (history.status === 'fulfilled') {
+        setRecent(history.value);
+      }
     } catch {
       // Silent fail — user may not be logged in
     } finally {
@@ -157,6 +166,11 @@ export function HomeScreen({ navigation }: Props) {
           <View>
             <Text style={styles.title}>AI Mechanic</Text>
             <Text style={styles.subtitle}>Диагностика проблемы автомобиля за секунды</Text>
+            {apiOnline !== null ? (
+              <Text style={apiOnline ? styles.apiOnline : styles.apiOffline}>
+                API {apiOnline ? 'online' : 'offline'}
+              </Text>
+            ) : null}
           </View>
           <Ionicons name="car-sport" size={36} color={theme.colors.primary} />
         </View>
@@ -288,6 +302,8 @@ const styles = StyleSheet.create({
   heroRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { color: theme.colors.text, fontSize: 32, fontWeight: '800' },
   subtitle: { color: theme.colors.textMuted, marginTop: 6, fontSize: 15 },
+  apiOnline: { color: theme.colors.success, marginTop: 8, fontWeight: '700' },
+  apiOffline: { color: theme.colors.danger, marginTop: 8, fontWeight: '700' },
   toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   toggleText: { flex: 1 },
   sectionHeader: { marginTop: 8 },

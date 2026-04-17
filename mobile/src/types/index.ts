@@ -18,6 +18,55 @@ export interface AuthResult {
   user: User;
 }
 
+export interface HealthResult {
+  name: string;
+  status: 'ok';
+}
+
+export type ChatRole = 'user' | 'assistant';
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  role: ChatRole;
+  content: string;
+  filePath?: string | null;
+  fileName?: string | null;
+  fileType?: 'image' | 'audio' | 'video' | 'file' | null;
+  mimeType?: string | null;
+  createdAt: string;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessage?: string | null;
+}
+
+export interface ChatSessionDetail {
+  id: string;
+  userId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessage[];
+}
+
+export interface SendChatMessageResult {
+  userMessage: ChatMessage;
+  assistantMessage: ChatMessage;
+}
+
+export interface VinDecodeResult {
+  make: string;
+  model: string;
+  year: string;
+  bodyType: string;
+  engineSize: string;
+}
+
 // ─── Cars ─────────────────────────────────────────────────────────────────────
 
 export interface Car {
@@ -30,14 +79,6 @@ export interface Car {
   bodyType?: string;
   engineSize?: string;
   createdAt: string;
-}
-
-export interface VinDecodeResult {
-  make: string;
-  model: string;
-  year: string;
-  bodyType: string;
-  engineSize: string;
 }
 
 // ─── Diagnosis ────────────────────────────────────────────────────────────────
@@ -151,10 +192,12 @@ export type RootStackParamList = {
   Prices: { diagnosisId: string };
   OBD: undefined;
   VIN: undefined;
+  Chat: { sessionId?: string } | undefined;
 };
 
 export type MainTabParamList = {
   Home: undefined;
+  ChatHistory: undefined;
   History: undefined;
   Profile: undefined;
   VINTab: undefined;

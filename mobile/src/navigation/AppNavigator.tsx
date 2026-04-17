@@ -11,6 +11,8 @@ import {
 } from '../types';
 
 // Screens
+import { ChatHistoryScreen } from '../screens/ChatHistoryScreen';
+import { ChatScreen } from '../screens/ChatScreen';
 import { DiagnosisScreen } from '../screens/DiagnosisScreen';
 import { HistoryScreen } from '../screens/HistoryScreen';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -43,6 +45,7 @@ function MainTabs() {
         tabBarIcon: ({ color, size }) => {
           const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
             Home: 'home',
+            ChatHistory: 'chatbubbles',
             History: 'time',
             Profile: 'person-circle',
             VINTab: 'barcode',
@@ -52,6 +55,7 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Главная' }} />
+      <Tab.Screen name="ChatHistory" component={ChatHistoryScreen} options={{ tabBarLabel: 'Чат' }} />
       <Tab.Screen name="History" component={HistoryScreen} options={{ tabBarLabel: 'История' }} />
       <Tab.Screen name="VINTab" component={VinScreen} options={{ tabBarLabel: 'VIN' }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarLabel: 'Профиль' }} />
@@ -96,6 +100,7 @@ function MainNavigator() {
       <Stack.Screen name="Quote" component={QuoteScreen} options={{ title: 'Проверка сметы' }} />
       <Stack.Screen name="Prices" component={PricesScreen} options={{ title: 'Цены на детали' }} />
       <Stack.Screen name="OBD" component={OBDScreen} options={{ title: 'OBD сканер' }} />
+      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'AI чат' }} />
     </Stack.Navigator>
   );
 }

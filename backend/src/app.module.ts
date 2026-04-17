@@ -5,6 +5,7 @@ import { join } from 'path';
 import { AppController } from './app.controller';
 import { AuthModule } from './auth/auth.module';
 import { CarsModule } from './cars/cars.module';
+import { ChatModule } from './chat/chat.module';
 import { DiagnosisModule } from './diagnosis/diagnosis.module';
 import { PricesModule } from './prices/prices.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -24,6 +25,7 @@ import { VinModule } from './vin/vin.module';
     PrismaModule,
     UsersModule,
     AuthModule,
+    ChatModule,
     DiagnosisModule,
     QuoteModule,
     PricesModule,
