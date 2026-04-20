@@ -16,21 +16,23 @@ import {
   QuoteComparisonResult,
 } from './types';
 
-const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic. Analyze this car problem.
+const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic specializing in the Tajikistan (Dushanbe) market. Analyze this car problem.
+
+ All prices must be in TJS (Tajik Somoni). Labor cost is 80-200 TJS per hour. Use realistic Dushanbe market prices.
 
  Return ONLY valid JSON (no markdown):
 
  {
 
-   "problem": "short problem title",
+   "problem": "short problem title in Russian",
 
-   "description": "detailed explanation",
+   "description": "detailed explanation in Russian",
 
    "severity": "low|medium|high",
 
    "parts_needed": [
 
-     { "name": "Part name", "price_min": 0, "price_max": 0, "currency": "USD" }
+     { "name": "Part name in Russian", "price_min": 0, "price_max": 0, "currency": "TJS" }
 
    ],
 
@@ -46,7 +48,7 @@ const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an 
 
  }`;
 
-const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechanic quote vs fair estimate.
+const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechanic quote vs fair estimate. All amounts are in TJS (Tajik Somoni). Market is Dushanbe, Tajikistan.
 
  Return ONLY valid JSON:
 
@@ -64,7 +66,7 @@ const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechani
 
    "overcharge_percent": 0,
 
-   "explanation": "human readable explanation",
+   "explanation": "human readable explanation in Russian",
 
    "suspicious_items": ["item1", "item2"]
 
@@ -352,7 +354,7 @@ ${JSON.stringify(input.diagnosis)}`;
         ...part,
         price_min: Number(part.price_min ?? 0),
         price_max: Number(part.price_max ?? 0),
-        currency: part.currency ?? 'USD',
+        currency: part.currency ?? 'TJS',
       })),
     };
   }
@@ -389,34 +391,34 @@ ${JSON.stringify(input.diagnosis)}`;
       ? [
           {
             name: 'Тормозные колодки',
-            price_min: 40,
-            price_max: 75,
-            currency: 'USD',
+            price_min: 120,
+            price_max: 350,
+            currency: 'TJS',
           },
           {
             name: 'Тормозные диски',
-            price_min: 80,
-            price_max: 140,
-            currency: 'USD',
+            price_min: 200,
+            price_max: 600,
+            currency: 'TJS',
           },
         ]
       : [
           {
             name: 'Датчик каталитического нейтрализатора',
-            price_min: 120,
-            price_max: 210,
-            currency: 'USD',
+            price_min: 350,
+            price_max: 900,
+            currency: 'TJS',
           },
           {
             name: 'Комплект прокладок выхлопной системы',
-            price_min: 25,
-            price_max: 45,
-            currency: 'USD',
+            price_min: 80,
+            price_max: 220,
+            currency: 'TJS',
           },
         ];
 
-    const laborMin = brakeFocused ? 120 : 180;
-    const laborMax = brakeFocused ? 200 : 320;
+    const laborMin = brakeFocused ? 160 : 240;
+    const laborMax = brakeFocused ? 320 : 480;
     const partsMin = parts.reduce((sum, part) => sum + part.price_min, 0);
     const partsMax = parts.reduce((sum, part) => sum + part.price_max, 0);
 

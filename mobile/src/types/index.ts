@@ -191,6 +191,8 @@ export type RootStackParamList = {
   Quote: { diagnosisId: string };
   Prices: { diagnosisId: string };
   OBD: undefined;
+  OBDResult: undefined;
+  HealthCheck: undefined;
   VIN: undefined;
   Chat: { sessionId?: string } | undefined;
 };

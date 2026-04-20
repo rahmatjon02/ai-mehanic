@@ -33,9 +33,7 @@ export function QuoteScreen({ route }: Props) {
       multiple: false,
     });
 
-    if (response.canceled) {
-      return;
-    }
+    if (response.canceled) return;
 
     const asset = response.assets[0];
     setQuoteFile({
@@ -106,13 +104,13 @@ export function QuoteScreen({ route }: Props) {
       {result ? (
         <GradientCard style={styles.resultCard}>
           <VerdictBadge verdict={result.verdict} />
-          <Text style={styles.amountText}>Механик запросил: ${result.mechanic_total}</Text>
+          <Text style={styles.amountText}>Механик запросил: {result.mechanic_total} сомон</Text>
           <Text style={styles.fairText}>
-            Справедливая цена: ${result.fair_estimate_min} - ${result.fair_estimate_max}
+            Справедливая цена: {result.fair_estimate_min} — {result.fair_estimate_max} сомон
           </Text>
           {result.verdict === 'overpriced' ? (
             <Text style={styles.overchargeText}>
-              Переплата: ${result.overcharge_amount} ({result.overcharge_percent}%)
+              Переплата: {result.overcharge_amount} сомон ({result.overcharge_percent}%)
             </Text>
           ) : null}
           <Text style={styles.explanation}>{result.explanation}</Text>
@@ -133,41 +131,23 @@ export function QuoteScreen({ route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    gap: theme.spacing.md,
-  },
-  sectionTitle: {
-    color: theme.colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 12,
-  },
+  container: { flex: 1, backgroundColor: theme.colors.background },
+  content: { padding: theme.spacing.lg, gap: theme.spacing.md },
+  sectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700', marginBottom: 12 },
   secondaryButton: {
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.radius,
     paddingVertical: 14,
     alignItems: 'center',
-    backgroundColor: '#191919',
+    backgroundColor: theme.colors.card,
   },
-  secondaryButtonText: {
-    color: theme.colors.text,
-    fontWeight: '700',
-  },
-  orText: {
-    color: theme.colors.textMuted,
-    textAlign: 'center',
-    marginVertical: 12,
-  },
+  secondaryButtonText: { color: theme.colors.text, fontWeight: '700' },
+  orText: { color: theme.colors.textMuted, textAlign: 'center', marginVertical: 12 },
   textInput: {
     minHeight: 120,
     borderRadius: theme.radius,
-    backgroundColor: '#131313',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: theme.colors.border,
     padding: 14,
@@ -180,40 +160,13 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
   },
-  primaryButtonText: {
-    color: theme.colors.text,
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  resultCard: {
-    gap: 12,
-  },
-  amountText: {
-    color: theme.colors.text,
-    fontSize: 22,
-    fontWeight: '800',
-  },
-  fairText: {
-    color: theme.colors.warning,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  overchargeText: {
-    color: theme.colors.danger,
-    fontWeight: '800',
-  },
-  explanation: {
-    color: theme.colors.textMuted,
-    lineHeight: 22,
-  },
-  listBlock: {
-    marginTop: 4,
-  },
-  listItem: {
-    color: theme.colors.text,
-    marginTop: 8,
-  },
-  errorText: {
-    color: theme.colors.danger,
-  },
+  primaryButtonText: { color: theme.colors.text, fontWeight: '800', fontSize: 16 },
+  resultCard: { gap: 12 },
+  amountText: { color: theme.colors.text, fontSize: 22, fontWeight: '800' },
+  fairText: { color: theme.colors.warning, fontSize: 18, fontWeight: '700' },
+  overchargeText: { color: theme.colors.danger, fontWeight: '800' },
+  explanation: { color: theme.colors.textMuted, lineHeight: 22 },
+  listBlock: { marginTop: 4 },
+  listItem: { color: theme.colors.text, marginTop: 8 },
+  errorText: { color: theme.colors.danger },
 });

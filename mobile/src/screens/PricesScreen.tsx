@@ -20,24 +20,18 @@ export function PricesScreen({ route }: Props) {
     const load = async () => {
       try {
         const prices = await apiService.getPrices(route.params.diagnosisId);
-        if (active) {
-          setData(prices);
-        }
+        if (active) setData(prices);
       } catch (err) {
         const message = (err as Error).message;
         setError(message);
         Alert.alert('Ошибка загрузки цен', message);
       } finally {
-        if (active) {
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     };
 
     load();
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [route.params.diagnosisId]);
 
   if (loading) {
@@ -74,9 +68,11 @@ export function PricesScreen({ route }: Props) {
                 <View style={styles.sourceInfo}>
                   <Text style={styles.storeName}>{source.store}</Text>
                   <Text style={styles.availability}>{source.availability}</Text>
-                  <Text style={styles.urlText}>{source.url}</Text>
+                  {source.price === cheapest ? (
+                    <Text style={styles.cheapestLabel}>🏆 Дешевле всего</Text>
+                  ) : null}
                 </View>
-                <Text style={styles.priceText}>${source.price}</Text>
+                <Text style={styles.priceText}>{source.price} сомон</Text>
               </View>
             ))}
           </GradientCard>
@@ -87,14 +83,8 @@ export function PricesScreen({ route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    gap: theme.spacing.md,
-  },
+  container: { flex: 1, backgroundColor: theme.colors.background },
+  content: { padding: theme.spacing.lg, gap: theme.spacing.md },
   centered: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -102,49 +92,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: theme.spacing.lg,
   },
-  partName: {
-    color: theme.colors.text,
-    fontSize: 20,
-    fontWeight: '800',
-    marginBottom: 12,
-  },
+  partName: { color: theme.colors.text, fontSize: 20, fontWeight: '800', marginBottom: 12 },
   sourceCard: {
     borderRadius: theme.radius,
     padding: 14,
-    backgroundColor: '#151515',
+    backgroundColor: theme.colors.card,
     marginTop: 10,
     borderWidth: 1,
-    borderColor: '#232323',
+    borderColor: theme.colors.border,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 10,
   },
-  sourceInfo: {
-    flex: 1,
-  },
-  cheapestCard: {
-    borderColor: theme.colors.success,
-  },
-  storeName: {
-    color: theme.colors.text,
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  availability: {
-    color: theme.colors.textMuted,
-    marginTop: 4,
-  },
-  urlText: {
-    color: theme.colors.warning,
-    marginTop: 4,
-  },
-  priceText: {
-    color: theme.colors.success,
-    fontSize: 22,
-    fontWeight: '800',
-  },
-  errorText: {
-    color: theme.colors.danger,
-  },
+  sourceInfo: { flex: 1 },
+  cheapestCard: { borderColor: theme.colors.success, borderWidth: 2 },
+  storeName: { color: theme.colors.text, fontWeight: '700', fontSize: 16 },
+  availability: { color: theme.colors.textMuted, marginTop: 4 },
+  cheapestLabel: { color: theme.colors.success, marginTop: 4, fontWeight: '700' },
+  priceText: { color: theme.colors.success, fontSize: 20, fontWeight: '800' },
+  errorText: { color: theme.colors.danger },
 });

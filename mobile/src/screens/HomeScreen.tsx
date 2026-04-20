@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Audio } from 'expo-av';
+import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useState } from 'react';
@@ -40,7 +40,7 @@ export function HomeScreen({ navigation }: Props) {
   const [recent, setRecent] = useState<DiagnosisListItem[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [recordingActive, setRecordingActive] = useState(false);
   const [selectedCar, setSelectedCar] = useState<Car | null>(null);
   const [carPickerOpen, setCarPickerOpen] = useState(false);
@@ -119,26 +119,22 @@ export function HomeScreen({ navigation }: Props) {
   };
 
   const toggleRecording = async () => {
-    if (!recording) {
-      const permission = await Audio.requestPermissionsAsync();
+    if (!recordingActive) {
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Нужно разрешение', 'Разреши доступ к микрофону для записи аудио.');
         return;
       }
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-
-      const { recording: nextRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-      );
-      setRecording(nextRecording);
+      await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
       setRecordingActive(true);
       return;
     }
 
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-    setRecording(null);
+    await audioRecorder.stop();
+    const uri = audioRecorder.uri;
     setRecordingActive(false);
 
     if (!uri) {
@@ -172,7 +168,10 @@ export function HomeScreen({ navigation }: Props) {
               </Text>
             ) : null}
           </View>
-          <Ionicons name="car-sport" size={36} color={theme.colors.primary} />
+          {/* OBD mock button — top right */}
+          <Pressable style={styles.obdIconButton} onPress={() => navigation.navigate('OBDResult')}>
+            <Text style={styles.obdIconText}>🔌</Text>
+          </Pressable>
         </View>
       </GradientCard>
 
@@ -238,7 +237,7 @@ export function HomeScreen({ navigation }: Props) {
           <Switch
             value={useObdData}
             onValueChange={setUseObdData}
-            trackColor={{ false: '#3A3A3A', true: '#7F1D1D' }}
+            trackColor={{ false: '#3A3A3A', true: theme.colors.accent }}
             thumbColor={useObdData ? theme.colors.primary : '#D1D5DB'}
           />
         </View>
@@ -286,7 +285,7 @@ export function HomeScreen({ navigation }: Props) {
               {item.description}
             </Text>
             <Text style={styles.priceText}>
-              ${item.totalMin} — ${item.totalMax}
+              {item.totalMin} — {item.totalMax} сомон
             </Text>
           </GradientCard>
         </Pressable>
@@ -299,7 +298,19 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
   content: { padding: theme.spacing.lg, gap: theme.spacing.md },
   hero: { paddingVertical: 24 },
-  heroRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  heroRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  obdIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: theme.colors.card,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 12,
+  },
+  obdIconText: { fontSize: 22 },
   title: { color: theme.colors.text, fontSize: 32, fontWeight: '800' },
   subtitle: { color: theme.colors.textMuted, marginTop: 6, fontSize: 15 },
   apiOnline: { color: theme.colors.success, marginTop: 8, fontWeight: '700' },

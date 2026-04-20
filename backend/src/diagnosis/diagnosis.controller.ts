@@ -13,6 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiBody,
   ApiConsumes,
@@ -28,6 +29,23 @@ import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt.guard';
 import { buildStoredFileName, detectFileType } from '../common/file.util';
 import { successResponse } from '../common/response.util';
 import { DiagnosisService } from './diagnosis.service';
+
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/jpg',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+  'audio/mp4',
+  'audio/m4a',
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'text/plain',
+]);
+
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
 @ApiTags('Diagnosis')
 @Controller('diagnosis')
@@ -51,6 +69,7 @@ export class DiagnosisController {
     },
   })
   @ApiResponse({ status: 201, description: 'Диагноз успешно создан.' })
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('analyze')
   @UseGuards(OptionalJwtAuthGuard)
   @UseInterceptors(
@@ -61,6 +80,7 @@ export class DiagnosisController {
           callback(null, buildStoredFileName(file.originalname));
         },
       }),
+      limits: { fileSize: MAX_FILE_SIZE },
     }),
   )
   async analyze(
@@ -71,6 +91,12 @@ export class DiagnosisController {
   ) {
     if (!file) {
       throw new BadRequestException('File is required');
+    }
+
+    if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      throw new BadRequestException(
+        'Недопустимый тип файла. Разрешены: jpg, png, mp3, mp4, wav',
+      );
     }
 
     detectFileType(file.mimetype, type);
@@ -101,7 +127,6 @@ export class DiagnosisController {
   async findOne(@Param('id') id: string, @CurrentUser() user?: JwtUser | null) {
     const result = await this.diagnosisService.findById(id);
 
-    // If the diagnosis belongs to another user → 403
     if (result.userId && result.userId !== user?.id) {
       throw new ForbiddenException('Access denied');
     }

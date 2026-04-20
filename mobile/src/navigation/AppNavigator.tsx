@@ -14,9 +14,11 @@ import {
 import { ChatHistoryScreen } from '../screens/ChatHistoryScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { DiagnosisScreen } from '../screens/DiagnosisScreen';
+import { HealthCheckScreen } from '../screens/HealthCheckScreen';
 import { HistoryScreen } from '../screens/HistoryScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LoginScreen } from '../screens/LoginScreen';
+import { OBDResultScreen } from '../screens/OBDResultScreen';
 import { OBDScreen } from '../screens/OBDScreen';
 import { PricesScreen } from '../screens/PricesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
@@ -100,6 +102,8 @@ function MainNavigator() {
       <Stack.Screen name="Quote" component={QuoteScreen} options={{ title: 'Проверка сметы' }} />
       <Stack.Screen name="Prices" component={PricesScreen} options={{ title: 'Цены на детали' }} />
       <Stack.Screen name="OBD" component={OBDScreen} options={{ title: 'OBD сканер' }} />
+      <Stack.Screen name="OBDResult" component={OBDResultScreen} options={{ title: 'OBD диагностика' }} />
+      <Stack.Screen name="HealthCheck" component={HealthCheckScreen} options={{ title: 'Диагностика системы' }} />
       <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'AI чат' }} />
     </Stack.Navigator>
   );

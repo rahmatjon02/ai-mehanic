@@ -9,7 +9,7 @@ export function GradientCard({
 }: PropsWithChildren<{ style?: ViewStyle }>) {
   return (
     <LinearGradient
-      colors={['#1F1F1F', '#141414']}
+      colors={['#1C1C28', '#13131A']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={[styles.card, style]}
@@ -24,7 +24,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius,
     padding: theme.spacing.md,
     borderWidth: 1,
-    borderColor: '#262626',
-    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
 });

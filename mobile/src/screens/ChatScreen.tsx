@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Audio } from 'expo-av';
+import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
@@ -33,7 +33,8 @@ export function ChatScreen({ route, navigation }: Props) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const [isRecording, setIsRecording] = useState(false);
   const scrollRef = useRef<ScrollView | null>(null);
 
   useEffect(() => {
@@ -141,27 +142,26 @@ export function ChatScreen({ route, navigation }: Props) {
   };
 
   const toggleRecording = async () => {
-    if (!recording) {
-      const permission = await Audio.requestPermissionsAsync();
+    if (!isRecording) {
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Нужно разрешение', 'Разреши доступ к микрофону.');
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await AudioModule.setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
-      const { recording: nextRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-      );
-      setRecording(nextRecording);
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      setIsRecording(true);
       return;
     }
 
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-    setRecording(null);
+    await audioRecorder.stop();
+    const uri = audioRecorder.uri;
+    setIsRecording(false);
 
     if (!uri) {
       Alert.alert('Ошибка записи', 'Аудиофайл не был создан.');
@@ -257,24 +257,24 @@ export function ChatScreen({ route, navigation }: Props) {
         <Pressable
           style={styles.toolButton}
           onPress={pickPhoto}
-          disabled={sending || Boolean(recording)}
+          disabled={sending || isRecording}
         >
           <Ionicons name="image-outline" size={20} color={theme.colors.text} />
         </Pressable>
         <Pressable
           style={styles.toolButton}
           onPress={pickMediaFile}
-          disabled={sending || Boolean(recording)}
+          disabled={sending || isRecording}
         >
           <Ionicons name="attach" size={20} color={theme.colors.text} />
         </Pressable>
         <Pressable
-          style={[styles.toolButton, recording && styles.recordingButton]}
+          style={[styles.toolButton, isRecording && styles.recordingButton]}
           onPress={toggleRecording}
           disabled={sending}
         >
           <Ionicons
-            name={recording ? 'stop' : 'mic-outline'}
+            name={isRecording ? 'stop' : 'mic-outline'}
             size={20}
             color={theme.colors.text}
           />
@@ -284,16 +284,16 @@ export function ChatScreen({ route, navigation }: Props) {
           value={input}
           onChangeText={setInput}
           placeholder={
-            recording ? 'Идёт запись...' : 'Напиши про проблему автомобиля...'
+            isRecording ? 'Идёт запись...' : 'Напиши про проблему автомобиля...'
           }
           placeholderTextColor={theme.colors.textMuted}
           multiline
-          editable={!recording}
+          editable={!isRecording}
         />
         <Pressable
           style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]}
           onPress={() => send()}
-          disabled={!input.trim() || sending || Boolean(recording)}
+          disabled={!input.trim() || sending || isRecording}
         >
           <Ionicons name="send" size={20} color={theme.colors.text} />
         </Pressable>

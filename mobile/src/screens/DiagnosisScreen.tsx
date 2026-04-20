@@ -1,8 +1,9 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,6 +25,18 @@ export function DiagnosisScreen({ navigation, route }: Props) {
   const [result, setResult] = useState<DiagnosisResult | null>(null);
   const [diagnosisId, setDiagnosisId] = useState<string | null>(route.params?.diagnosisId ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [slowWarning, setSlowWarning] = useState(false);
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.05, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+      ]),
+    ).start();
+  }, [pulseAnim]);
 
   useEffect(() => {
     let active = true;
@@ -33,15 +46,19 @@ export function DiagnosisScreen({ navigation, route }: Props) {
       try {
         setLoading(true);
         setError(null);
+        setSlowWarning(false);
+
+        slowTimer.current = setTimeout(() => {
+          if (active) setSlowWarning(true);
+        }, 15000);
+
         progressInterval = setInterval(() => {
           setProgress((current) => (current >= 92 ? current : current + 8));
         }, 400);
 
         if (route.params?.diagnosisId) {
           const detail = await apiService.getDiagnosis(route.params.diagnosisId);
-          if (!active) {
-            return;
-          }
+          if (!active) return;
           setDiagnosisId(detail.id);
           setResult(detail.result);
           setProgress(100);
@@ -57,9 +74,7 @@ export function DiagnosisScreen({ navigation, route }: Props) {
           route.params.inputType,
           route.params.carId,
         );
-        if (!active) {
-          return;
-        }
+        if (!active) return;
         setDiagnosisId(diagnosis.diagnosisId);
         setResult(diagnosis);
         setProgress(100);
@@ -68,12 +83,9 @@ export function DiagnosisScreen({ navigation, route }: Props) {
         setError(message);
         Alert.alert('Ошибка диагностики', message);
       } finally {
-        if (progressInterval) {
-          clearInterval(progressInterval);
-        }
-        if (active) {
-          setLoading(false);
-        }
+        if (progressInterval) clearInterval(progressInterval);
+        if (slowTimer.current) clearTimeout(slowTimer.current);
+        if (active) setLoading(false);
       }
     };
 
@@ -81,21 +93,14 @@ export function DiagnosisScreen({ navigation, route }: Props) {
 
     return () => {
       active = false;
-      if (progressInterval) {
-        clearInterval(progressInterval);
-      }
+      if (progressInterval) clearInterval(progressInterval);
+      if (slowTimer.current) clearTimeout(slowTimer.current);
     };
   }, [route.params]);
 
   const boostedResult = useMemo(() => {
-    if (!result) {
-      return null;
-    }
-
-    if (!route.params?.obdReading) {
-      return result;
-    }
-
+    if (!result) return null;
+    if (!route.params?.obdReading) return result;
     return {
       ...result,
       description: `${result.description} Усиление OBD: ${route.params.obdReading.diagnosisBoost}`,
@@ -103,13 +108,26 @@ export function DiagnosisScreen({ navigation, route }: Props) {
     };
   }, [result, route.params?.obdReading]);
 
+  const severityColor = (severity?: string) => {
+    if (severity === 'high') return theme.colors.danger;
+    if (severity === 'medium') return theme.colors.warning;
+    return theme.colors.success;
+  };
+
   if (loading) {
     return (
       <View style={styles.centered}>
         <GradientCard style={styles.loadingCard}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.progressLabel}>Прогресс загрузки: {progress}%</Text>
+          <Animated.Text style={[styles.progressLabel, { transform: [{ scale: pulseAnim }] }]}>
+            {progress}%
+          </Animated.Text>
           <LoaderDots label="Анализируем проблему автомобиля..." />
+          {slowWarning ? (
+            <Text style={styles.slowWarning}>
+              Анализ занимает больше времени чем обычно...
+            </Text>
+          ) : null}
         </GradientCard>
       </View>
     );
@@ -125,14 +143,14 @@ export function DiagnosisScreen({ navigation, route }: Props) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <GradientCard style={styles.resultCard}>
+      <GradientCard style={[styles.resultCard, { borderColor: severityColor(boostedResult.severity) }]}>
         <View style={styles.headerRow}>
           <Text style={styles.problemTitle}>{boostedResult.problem}</Text>
           <SeverityBadge severity={boostedResult.severity} />
         </View>
         <Text style={styles.description}>{boostedResult.description}</Text>
         <Text style={styles.costRange}>
-          ${boostedResult.total_cost_min} - ${boostedResult.total_cost_max}
+          {boostedResult.total_cost_min} — {boostedResult.total_cost_max} сомон
         </Text>
         <Text style={styles.confidence}>Уверенность: {(boostedResult.confidence * 100).toFixed(0)}%</Text>
 
@@ -147,7 +165,7 @@ export function DiagnosisScreen({ navigation, route }: Props) {
           <View key={part.name} style={styles.partRow}>
             <Text style={styles.partName}>{part.name}</Text>
             <Text style={styles.partPrice}>
-              ${part.price_min} - ${part.price_max}
+              {part.price_min} — {part.price_max} сомон
             </Text>
           </View>
         ))}
@@ -165,14 +183,8 @@ export function DiagnosisScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    gap: theme.spacing.md,
-  },
+  container: { flex: 1, backgroundColor: theme.colors.background },
+  content: { padding: theme.spacing.lg, gap: theme.spacing.md },
   centered: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -180,81 +192,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: theme.spacing.lg,
   },
-  loadingCard: {
-    width: '100%',
-    alignItems: 'center',
-    gap: 16,
-  },
-  progressLabel: {
-    color: theme.colors.warning,
-    fontWeight: '700',
-  },
-  resultCard: {
-    gap: 14,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-    alignItems: 'flex-start',
-  },
-  problemTitle: {
-    color: theme.colors.text,
-    fontSize: 28,
-    fontWeight: '800',
-    flex: 1,
-  },
-  description: {
-    color: theme.colors.textMuted,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  costRange: {
-    color: theme.colors.warning,
-    fontSize: 26,
-    fontWeight: '800',
-  },
-  confidence: {
-    color: theme.colors.success,
-    fontWeight: '600',
-  },
-  obdText: {
-    color: theme.colors.primary,
-    fontWeight: '700',
-  },
-  sectionTitle: {
-    color: theme.colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 10,
-  },
+  loadingCard: { width: '100%', alignItems: 'center', gap: 16 },
+  progressLabel: { color: theme.colors.warning, fontWeight: '800', fontSize: 32 },
+  slowWarning: { color: theme.colors.warning, textAlign: 'center', marginTop: 8, fontStyle: 'italic' },
+  resultCard: { gap: 14, borderWidth: 2 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' },
+  problemTitle: { color: theme.colors.text, fontSize: 26, fontWeight: '800', flex: 1 },
+  description: { color: theme.colors.textMuted, fontSize: 15, lineHeight: 22 },
+  costRange: { color: theme.colors.warning, fontSize: 26, fontWeight: '800' },
+  confidence: { color: theme.colors.success, fontWeight: '600' },
+  obdText: { color: theme.colors.primary, fontWeight: '700' },
+  sectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '700', marginBottom: 10 },
   partRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#333',
+    borderBottomColor: theme.colors.border,
   },
-  partName: {
-    color: theme.colors.text,
-    fontSize: 15,
-    flex: 1,
-  },
-  partPrice: {
-    color: theme.colors.textMuted,
-    fontWeight: '700',
-  },
+  partName: { color: theme.colors.text, fontSize: 15, flex: 1 },
+  partPrice: { color: theme.colors.textMuted, fontWeight: '700' },
   primaryButton: {
     backgroundColor: theme.colors.primary,
     paddingVertical: 16,
     borderRadius: theme.radius,
     alignItems: 'center',
   },
-  primaryButtonText: {
-    color: theme.colors.text,
-    fontWeight: '800',
-    fontSize: 16,
-  },
+  primaryButtonText: { color: theme.colors.text, fontWeight: '800', fontSize: 16 },
   secondaryButton: {
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -263,14 +227,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: theme.colors.surface,
   },
-  secondaryButtonText: {
-    color: theme.colors.text,
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  errorText: {
-    color: theme.colors.danger,
-    textAlign: 'center',
-    fontSize: 16,
-  },
+  secondaryButtonText: { color: theme.colors.text, fontWeight: '700', fontSize: 16 },
+  errorText: { color: theme.colors.danger, textAlign: 'center', fontSize: 16 },
 });

@@ -99,7 +99,7 @@ export function HistoryScreen({ navigation }: Props) {
               {item.description}
             </Text>
             <Text style={styles.meta}>
-              {new Date(item.createdAt).toLocaleString('ru-RU')} • ${item.totalMin} — ${item.totalMax}
+              {new Date(item.createdAt).toLocaleString('ru-RU')} • {item.totalMin} — {item.totalMax} сомон
             </Text>
           </GradientCard>
         </Pressable>

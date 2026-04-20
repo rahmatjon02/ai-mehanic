@@ -177,6 +177,14 @@ export function ProfileScreen({ navigation }: Props) {
         ))
       )}
 
+      <Pressable
+        style={styles.healthButton}
+        onPress={() => navigation.navigate('HealthCheck')}
+      >
+        <Ionicons name="settings-outline" size={20} color={theme.colors.textMuted} />
+        <Text style={styles.healthButtonText}>Диагностика системы</Text>
+      </Pressable>
+
       <Pressable style={styles.logoutButton} onPress={handleLogout}>
         <Ionicons name="log-out-outline" size={20} color={theme.colors.danger} />
         <Text style={styles.logoutText}>Выйти</Text>
@@ -225,6 +233,18 @@ const styles = StyleSheet.create({
   carName: { color: theme.colors.text, fontSize: 16, fontWeight: '700' },
   carVin: { color: theme.colors.textMuted, fontSize: 13 },
   carMeta: { color: theme.colors.textMuted, fontSize: 13 },
+  healthButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: 8,
+  },
+  healthButtonText: { color: theme.colors.textMuted, fontWeight: '700', fontSize: 16 },
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
