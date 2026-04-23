@@ -6,15 +6,25 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI, Part } from '@google/generative-ai';
 import { OpenAI, toFile } from 'openai';
+import Groq from 'groq-sdk';
 import { lookup as lookupMime } from 'mime-types';
-import { readFile } from 'fs/promises';
-import { basename } from 'path';
+import { readFile, unlink } from 'fs/promises';
+import { createReadStream } from 'fs';
+import { basename, join } from 'path';
+import { tmpdir } from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { safeJsonParse } from './json.util';
 import {
   ChatPromptMessage,
   DiagnosisResult,
   QuoteComparisonResult,
 } from './types';
+
+const execFileAsync = promisify(execFile);
+
+const GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+const GROQ_AUDIO_MODEL = 'whisper-large-v3';
 
 const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic specializing in the Tajikistan (Dushanbe) market. Analyze this car problem.
 
@@ -81,6 +91,7 @@ export class AiService {
   private readonly geminiApiKey: string;
   private readonly geminiModel: string;
   private readonly openAiApiKey: string;
+  private readonly groqApiKey: string;
 
   constructor(private readonly configService: ConfigService) {
     this.geminiApiKey = this.configService.get<string>('GEMINI_API_KEY') ?? '';
@@ -88,6 +99,7 @@ export class AiService {
       this.configService.get<string>('GEMINI_MODEL')?.trim() ||
       'gemini-2.0-flash';
     this.openAiApiKey = this.configService.get<string>('OPENAI_API_KEY') ?? '';
+    this.groqApiKey = this.configService.get<string>('GROQ_API_KEY') ?? '';
   }
 
   async analyzeDiagnosis(input: {
@@ -104,6 +116,39 @@ export class AiService {
         return await this.generateDiagnosisFromText(transcript);
       }
 
+      // Try Groq first for image/video
+      if (this.canUseGroq()) {
+        let groqFilePath = input.filePath;
+        let groqMimeType = input.mimeType;
+        let tempFrame: string | null = null;
+
+        if (input.fileType === 'video') {
+          tempFrame = await this.extractVideoMiddleFrame(input.filePath);
+          if (tempFrame) {
+            groqFilePath = tempFrame;
+            groqMimeType = 'image/jpeg';
+          }
+        }
+
+        if (input.fileType === 'image' || tempFrame) {
+          try {
+            const response = await this.generateGroqJson<DiagnosisResult>({
+              prompt: DIAGNOSIS_PROMPT,
+              filePath: groqFilePath,
+              mimeType: groqMimeType,
+            });
+            return this.normalizeDiagnosis(response);
+          } catch (groqError) {
+            this.logger.warn(
+              `Groq diagnosis failed, trying Gemini: ${(groqError as Error).message}`,
+            );
+          } finally {
+            if (tempFrame) await unlink(tempFrame).catch(() => {});
+          }
+        }
+      }
+
+      // Fallback to Gemini
       if (!this.canUseGemini()) {
         return this.buildMockDiagnosis(input.fileType);
       }
@@ -135,7 +180,7 @@ export class AiService {
         );
       }
 
-      if (!input.filePath || !input.mimeType || !this.canUseGemini()) {
+      if (!input.filePath || !input.mimeType) {
         return this.buildQuoteComparisonFromText('', input.diagnosis);
       }
 
@@ -143,6 +188,28 @@ export class AiService {
 
 Fair estimate context:
 ${JSON.stringify(input.diagnosis)}`;
+
+      // Try Groq first
+      if (this.canUseGroq()) {
+        try {
+          const response = await this.generateGroqJson<QuoteComparisonResult>({
+            prompt,
+            filePath: input.filePath,
+            mimeType: input.mimeType,
+          });
+          return this.normalizeQuoteComparison(response, input.diagnosis);
+        } catch (groqError) {
+          this.logger.warn(
+            `Groq quote failed, trying Gemini: ${(groqError as Error).message}`,
+          );
+        }
+      }
+
+      // Fallback to Gemini
+      if (!this.canUseGemini()) {
+        return this.buildQuoteComparisonFromText('', input.diagnosis);
+      }
+
       const response = await this.generateGeminiJson<QuoteComparisonResult>({
         prompt,
         filePath: input.filePath,
@@ -161,6 +228,19 @@ ${JSON.stringify(input.diagnosis)}`;
 
   async generateChatReply(messages: ChatPromptMessage[]): Promise<string> {
     try {
+      // Try Groq first
+      if (this.canUseGroq()) {
+        try {
+          const response = await this.generateGroqText({ messages });
+          if (response.trim()) return response.trim();
+        } catch (groqError) {
+          this.logger.warn(
+            `Groq chat failed, trying Gemini: ${(groqError as Error).message}`,
+          );
+        }
+      }
+
+      // Fallback to Gemini
       if (!this.canUseGemini()) {
         return this.buildMockChatReply(messages);
       }
@@ -185,15 +265,30 @@ ${JSON.stringify(input.diagnosis)}`;
   private async generateDiagnosisFromText(
     text: string,
   ): Promise<DiagnosisResult> {
+    const prompt = `${DIAGNOSIS_PROMPT}\n\nUser description:\n${text}`;
+
+    // Try Groq first
+    if (this.canUseGroq()) {
+      try {
+        const response = await this.generateGroqJson<DiagnosisResult>({
+          prompt,
+        });
+        return this.normalizeDiagnosis(response);
+      } catch (groqError) {
+        this.logger.warn(
+          `Groq text diagnosis failed, trying Gemini: ${(groqError as Error).message}`,
+        );
+      }
+    }
+
     if (!this.canUseGemini()) {
       return this.buildMockDiagnosis('audio', text);
     }
 
     try {
       const response = await this.generateGeminiJson<DiagnosisResult>({
-        prompt: `${DIAGNOSIS_PROMPT}\n\nUser description:\n${text}`,
+        prompt,
       });
-
       return this.normalizeDiagnosis(response);
     } catch (error) {
       this.logger.warn(
@@ -207,6 +302,18 @@ ${JSON.stringify(input.diagnosis)}`;
     filePath: string,
     mimeType: string,
   ): Promise<string> {
+    // Try Groq whisper first
+    if (this.canUseGroq()) {
+      try {
+        return await this.transcribeAudioGroq(filePath);
+      } catch (groqError) {
+        this.logger.warn(
+          `Groq transcription failed, trying OpenAI: ${(groqError as Error).message}`,
+        );
+      }
+    }
+
+    // Fallback to OpenAI
     if (!this.canUseOpenAi()) {
       return 'Customer reports rattling noise near the front brakes and reduced stopping performance.';
     }
@@ -230,6 +337,132 @@ ${JSON.stringify(input.diagnosis)}`;
       return 'Customer reports rattling noise near the front brakes and reduced stopping performance.';
     }
   }
+
+  // ── Groq methods ──────────────────────────────────────────────────────────
+
+  private async generateGroqJson<T>(input: {
+    prompt: string;
+    filePath?: string;
+    mimeType?: string;
+  }): Promise<T> {
+    const groq = new Groq({ apiKey: this.groqApiKey });
+    const hasFile = Boolean(input.filePath && input.mimeType);
+
+    type TextPart = { type: 'text'; text: string };
+    type ImagePart = { type: 'image_url'; image_url: { url: string } };
+
+    let userContent: string | Array<TextPart | ImagePart>;
+
+    if (hasFile) {
+      const data = await readFile(input.filePath!);
+      const base64 = data.toString('base64');
+      userContent = [
+        { type: 'text', text: input.prompt },
+        {
+          type: 'image_url',
+          image_url: { url: `data:${input.mimeType};base64,${base64}` },
+        },
+      ];
+    } else {
+      userContent = input.prompt;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any = {
+      model: GROQ_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You must respond only in Russian language. Return ONLY valid JSON, no markdown.',
+        },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.3,
+    };
+
+    if (!hasFile) {
+      params.response_format = { type: 'json_object' };
+    }
+
+    const completion = await groq.chat.completions.create(params);
+    const text = completion.choices[0]?.message?.content ?? '';
+    return safeJsonParse<T>(text);
+  }
+
+  private async generateGroqText(input: {
+    messages: ChatPromptMessage[];
+  }): Promise<string> {
+    const groq = new Groq({ apiKey: this.groqApiKey });
+
+    const groqMessages = [
+      { role: 'system' as const, content: CHAT_SYSTEM_PROMPT },
+      ...input.messages.map((msg) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      })),
+    ];
+
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: groqMessages,
+      temperature: 0.7,
+    });
+
+    return completion.choices[0]?.message?.content ?? '';
+  }
+
+  private async transcribeAudioGroq(filePath: string): Promise<string> {
+    const groq = new Groq({ apiKey: this.groqApiKey });
+    const transcription = await groq.audio.transcriptions.create({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      file: createReadStream(filePath) as any,
+      model: GROQ_AUDIO_MODEL,
+    });
+    return transcription.text;
+  }
+
+  private async extractVideoMiddleFrame(
+    videoPath: string,
+  ): Promise<string | null> {
+    try {
+      const framePath = join(tmpdir(), `frame_${Date.now()}.jpg`);
+
+      const { stdout } = await execFileAsync('ffprobe', [
+        '-v',
+        'quiet',
+        '-print_format',
+        'json',
+        '-show_format',
+        videoPath,
+      ]);
+
+      const info = JSON.parse(stdout) as {
+        format?: { duration?: string };
+      };
+      const duration = parseFloat(info.format?.duration ?? '2');
+      const midpoint = String(Math.max(duration / 2, 0.5));
+
+      await execFileAsync('ffmpeg', [
+        '-ss',
+        midpoint,
+        '-i',
+        videoPath,
+        '-frames:v',
+        '1',
+        '-q:v',
+        '2',
+        '-y',
+        framePath,
+      ]);
+
+      return framePath;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Gemini methods (kept intact as fallback) ──────────────────────────────
 
   private async generateGeminiJson<T>(input: {
     prompt: string;
@@ -340,6 +573,8 @@ ${JSON.stringify(input.diagnosis)}`;
 
     throw lastError ?? new Error('Gemini chat request failed');
   }
+
+  // ── Normalizers & mocks ───────────────────────────────────────────────────
 
   private normalizeDiagnosis(result: DiagnosisResult): DiagnosisResult {
     return {
@@ -529,19 +764,27 @@ ${JSON.stringify(input.diagnosis)}`;
     return 'fair';
   }
 
+  private canUseGroq(): boolean {
+    return Boolean(
+      this.groqApiKey &&
+        this.groqApiKey !== 'xxx' &&
+        process.env.NODE_ENV !== 'test',
+    );
+  }
+
   private canUseGemini() {
     return Boolean(
       this.geminiApiKey &&
-      this.geminiApiKey !== 'xxx' &&
-      process.env.NODE_ENV !== 'test',
+        this.geminiApiKey !== 'xxx' &&
+        process.env.NODE_ENV !== 'test',
     );
   }
 
   private canUseOpenAi() {
     return Boolean(
       this.openAiApiKey &&
-      this.openAiApiKey !== 'xxx' &&
-      process.env.NODE_ENV !== 'test',
+        this.openAiApiKey !== 'xxx' &&
+        process.env.NODE_ENV !== 'test',
     );
   }
 }
