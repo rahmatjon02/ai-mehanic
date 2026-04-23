@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PrismaClient } from '@prisma/client';
+import OpenAI from 'openai';
+import Groq from 'groq-sdk';
 
 @Injectable()
 export class HealthService {
@@ -11,17 +13,21 @@ export class HealthService {
 
   async getDiagnostics() {
     const timestamp = new Date().toISOString();
-    const [db, gemini, nhtsa] = await Promise.all([
+    const [db, groq, openai, gemini, nhtsa] = await Promise.all([
       this.checkDb(),
+      this.checkGroq(),
+      this.checkOpenAi(),
       this.checkGemini(),
       this.checkNhtsa(),
     ]);
 
+    const aiAvailable = groq || openai || gemini;
+
     return {
       db,
-      gemini,
+      ai: { groq, openai, gemini },
       nhtsa,
-      allSystemsGo: db && gemini && nhtsa,
+      allSystemsGo: db && aiAvailable,
       timestamp,
     };
   }
@@ -36,6 +42,40 @@ export class HealthService {
       return false;
     } finally {
       await prisma.$disconnect();
+    }
+  }
+
+  private async checkGroq(): Promise<boolean> {
+    const key = this.config.get<string>('GROQ_API_KEY');
+    if (!key || key === 'xxx') return false;
+    try {
+      const groq = new Groq({ apiKey: key });
+      const res = await groq.chat.completions.create({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 5,
+      });
+      return Boolean(res.choices[0]?.message?.content);
+    } catch (err) {
+      this.logger.warn(`Groq health check failed: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
+  private async checkOpenAi(): Promise<boolean> {
+    const key = this.config.get<string>('OPENAI_API_KEY');
+    if (!key || key === 'xxx') return false;
+    try {
+      const openai = new OpenAI({ apiKey: key });
+      const res = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 5,
+      });
+      return Boolean(res.choices[0]?.message?.content);
+    } catch (err) {
+      this.logger.warn(`OpenAI health check failed: ${(err as Error).message}`);
+      return false;
     }
   }
 
@@ -57,7 +97,7 @@ export class HealthService {
     try {
       const res = await fetch(
         'https://vpic.api.nhtsa.dot.gov/api/vehicles/DecodeVin/1HGCM82633A004352?format=json',
-        { signal: AbortSignal.timeout(8000) },
+        { signal: AbortSignal.timeout(10000) },
       );
       return res.ok;
     } catch (err) {

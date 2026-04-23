@@ -5,10 +5,12 @@ import {
   Param,
   Post,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiConsumes,
   ApiOperation,
@@ -16,12 +18,15 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { diskStorage } from 'multer';
 import { buildStoredFileName } from '../common/file.util';
 import { successResponse } from '../common/response.util';
 import { QuoteService } from './quote.service';
 
 @ApiTags('Quote')
+@ApiBearerAuth('access-token')
+@UseGuards(JwtAuthGuard)
 @Controller('quote')
 export class QuoteController {
   constructor(private readonly quoteService: QuoteService) {}

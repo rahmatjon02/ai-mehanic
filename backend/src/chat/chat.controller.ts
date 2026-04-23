@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiConsumes,
   ApiOperation,
@@ -30,6 +31,7 @@ import { successResponse } from '../common/response.util';
 import { ChatService } from './chat.service';
 
 @ApiTags('Chat')
+@ApiBearerAuth('access-token')
 @UseGuards(JwtAuthGuard)
 @Controller('chat')
 export class ChatController {

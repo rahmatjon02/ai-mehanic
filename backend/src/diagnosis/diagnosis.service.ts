@@ -14,7 +14,6 @@ export class DiagnosisService {
     file: Express.Multer.File,
     explicitType?: string,
     userId?: string,
-    carId?: string,
   ) {
     const fileType = file.mimetype.startsWith('image/')
       ? 'image'
@@ -41,7 +40,7 @@ export class DiagnosisService {
         totalMin: result.total_cost_min,
         totalMax: result.total_cost_max,
         userId: userId ?? null,
-        carId: carId ?? null,
+        carId: null,
       },
     });
 

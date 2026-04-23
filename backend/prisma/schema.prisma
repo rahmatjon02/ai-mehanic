@@ -8,22 +8,21 @@ datasource db {
 }
 
 model User {
-  id        String      @id @default(uuid())
-  email     String      @unique
-  name      String
-  avatar    String?
-  googleId  String?     @unique
-  password  String?
-  createdAt DateTime    @default(now())
-  diagnoses Diagnosis[]
-  cars      Car[]
+  id           String        @id @default(uuid())
+  email        String        @unique
+  name         String
+  avatar       String?
+  googleId     String?       @unique
+  password     String?
+  createdAt    DateTime      @default(now())
+  cars         Car[]
   chatSessions ChatSession[]
+  diagnoses    Diagnosis[]
 }
 
 model Car {
   id         String      @id @default(uuid())
   userId     String
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   vin        String?
   make       String
   model      String
@@ -31,15 +30,12 @@ model Car {
   bodyType   String?
   engineSize String?
   createdAt  DateTime    @default(now())
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   diagnoses  Diagnosis[]
 }
 
 model Diagnosis {
   id          String   @id @default(uuid())
-  userId      String?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  carId       String?
-  car         Car?     @relation(fields: [carId], references: [id], onDelete: SetNull)
   fileType    String
   filePath    String
   rawResult   String
@@ -49,13 +45,16 @@ model Diagnosis {
   totalMin    Float
   totalMax    Float
   createdAt   DateTime @default(now())
+  carId       String?
+  userId      String?
+  car         Car?     @relation(fields: [carId], references: [id])
+  user        User?    @relation(fields: [userId], references: [id])
   quotes      Quote[]
 }
 
 model Quote {
   id            String    @id @default(uuid())
   diagnosisId   String
-  diagnosis     Diagnosis @relation(fields: [diagnosisId], references: [id], onDelete: Cascade)
   filePath      String?
   mechanicTotal Float
   verdict       String
@@ -64,27 +63,28 @@ model Quote {
   explanation   String
   rawResult     String
   createdAt     DateTime  @default(now())
+  diagnosis     Diagnosis @relation(fields: [diagnosisId], references: [id], onDelete: Cascade)
 }
 
 model ChatSession {
   id        String        @id @default(uuid())
   userId    String
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   messages  ChatMessage[]
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model ChatMessage {
   id        String      @id @default(uuid())
   sessionId String
-  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   role      String
   content   String
-  filePath  String?
+  createdAt DateTime    @default(now())
   fileName  String?
+  filePath  String?
   fileType  String?
   mimeType  String?
-  createdAt DateTime    @default(now())
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }

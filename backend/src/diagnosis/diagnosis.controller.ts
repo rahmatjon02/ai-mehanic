@@ -15,6 +15,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiConsumes,
   ApiOperation,
@@ -25,7 +26,7 @@ import {
 import { diskStorage } from 'multer';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtUser } from '../auth/decorators/current-user.decorator';
-import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { buildStoredFileName, detectFileType } from '../common/file.util';
 import { successResponse } from '../common/response.util';
 import { DiagnosisService } from './diagnosis.service';
@@ -48,6 +49,8 @@ const ALLOWED_MIME_TYPES = new Set([
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
 @ApiTags('Diagnosis')
+@ApiBearerAuth('access-token')
+@UseGuards(JwtAuthGuard)
 @Controller('diagnosis')
 export class DiagnosisController {
   constructor(private readonly diagnosisService: DiagnosisService) {}
@@ -61,17 +64,13 @@ export class DiagnosisController {
       required: ['file'],
       properties: {
         file: { type: 'string', format: 'binary' },
-        carId: {
-          type: 'string',
-          description: 'ID сохранённой машины (необязательно)',
-        },
       },
     },
   })
   @ApiResponse({ status: 201, description: 'Диагноз успешно создан.' })
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('analyze')
-  @UseGuards(OptionalJwtAuthGuard)
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -84,10 +83,9 @@ export class DiagnosisController {
     }),
   )
   async analyze(
+    @CurrentUser() user: JwtUser,
     @UploadedFile() file?: Express.Multer.File,
     @Query('type') type?: string,
-    @Body('carId') carId?: string,
-    @CurrentUser() user?: JwtUser | null,
   ) {
     if (!file) {
       throw new BadRequestException('File is required');
@@ -100,34 +98,27 @@ export class DiagnosisController {
     }
 
     detectFileType(file.mimetype, type);
-    const data = await this.diagnosisService.analyze(
-      file,
-      type,
-      user?.id,
-      carId,
-    );
+    const data = await this.diagnosisService.analyze(file, type, user.id);
     return successResponse(data);
   }
 
   @ApiOperation({ summary: 'Список диагностик текущего пользователя' })
   @Get()
-  @UseGuards(OptionalJwtAuthGuard)
   async list(
+    @CurrentUser() user: JwtUser,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
-    @CurrentUser() user?: JwtUser | null,
   ) {
     return successResponse(
-      await this.diagnosisService.list(limit ?? 20, user?.id ?? undefined),
+      await this.diagnosisService.list(limit ?? 20, user.id),
     );
   }
 
   @ApiOperation({ summary: 'Получить диагностику по ID' })
   @Get(':id')
-  @UseGuards(OptionalJwtAuthGuard)
-  async findOne(@Param('id') id: string, @CurrentUser() user?: JwtUser | null) {
+  async findOne(@Param('id') id: string, @CurrentUser() user: JwtUser) {
     const result = await this.diagnosisService.findById(id);
 
-    if (result.userId && result.userId !== user?.id) {
+    if (result.userId && result.userId !== user.id) {
       throw new ForbiddenException('Access denied');
     }
 

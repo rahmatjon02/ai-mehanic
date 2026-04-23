@@ -1,9 +1,12 @@
-import { Controller, Get, Param } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { successResponse } from '../common/response.util';
 import { PricesService } from './prices.service';
 
 @ApiTags('Prices')
+@ApiBearerAuth('access-token')
+@UseGuards(JwtAuthGuard)
 @Controller('prices')
 export class PricesController {
   constructor(private readonly pricesService: PricesService) {}
