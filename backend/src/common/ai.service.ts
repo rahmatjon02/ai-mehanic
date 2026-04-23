@@ -23,6 +23,12 @@ const GROQ_AUDIO_MODEL = 'whisper-large-v3';
 
 const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic specializing in the Tajikistan (Dushanbe) market. Analyze this car problem.
 
+ CRITICAL RULES:
+ - If the file does NOT show a car or car parts: respond with problem='Файл не относится к автомобилю', description='Пожалуйста, загрузите фото, видео или аудио с проблемой вашего автомобиля.', severity='low', parts_needed=[], labor_cost_min=0, labor_cost_max=0, total_cost_min=0, total_cost_max=0, confidence=0
+ - If the car looks completely healthy with NO visible problems: respond with problem='Видимых проблем не обнаружено', description='Автомобиль выглядит исправным. Опишите симптомы если они есть.', severity='low', parts_needed=[], labor_cost_min=0, labor_cost_max=0, total_cost_min=0, total_cost_max=0, confidence=0.5
+ - NEVER invent or guess problems that are not clearly visible
+ - ONLY diagnose problems you can actually see or hear
+
  All prices must be in TJS (Tajik Somoni). Labor cost is 80-200 TJS per hour. Use realistic Dushanbe market prices.
 
  Return ONLY valid JSON (no markdown):
