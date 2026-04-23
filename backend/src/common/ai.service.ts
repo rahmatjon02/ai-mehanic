@@ -8,20 +8,15 @@ import { GoogleGenerativeAI, Part } from '@google/generative-ai';
 import { OpenAI, toFile } from 'openai';
 import Groq from 'groq-sdk';
 import { lookup as lookupMime } from 'mime-types';
-import { readFile, unlink } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { createReadStream } from 'fs';
-import { basename, join } from 'path';
-import { tmpdir } from 'os';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { basename } from 'path';
 import { safeJsonParse } from './json.util';
 import {
   ChatPromptMessage,
   DiagnosisResult,
   QuoteComparisonResult,
 } from './types';
-
-const execFileAsync = promisify(execFile);
 
 const GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 const GROQ_AUDIO_MODEL = 'whisper-large-v3';
@@ -85,6 +80,11 @@ const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechani
 const CHAT_SYSTEM_PROMPT =
   'You must respond only in Russian language. You are AI Mechanic, a helpful automotive assistant. Give practical, safe, concise advice. Ask for missing car details when needed. If the issue could be dangerous, recommend stopping driving and contacting a mechanic.';
 
+const VIDEO_TEXT_FALLBACK =
+  `${DIAGNOSIS_PROMPT}\n\n` +
+  `Пользователь загрузил видеозапись проблемы с автомобилем. ` +
+  `Выполните диагностику на основе наиболее типичных неисправностей.`;
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -102,68 +102,85 @@ export class AiService {
     this.groqApiKey = this.configService.get<string>('GROQ_API_KEY') ?? '';
   }
 
+  // ── Public API ────────────────────────────────────────────────────────────
+
   async analyzeDiagnosis(input: {
     filePath: string;
     mimeType: string;
     fileType: 'image' | 'audio' | 'video';
   }): Promise<DiagnosisResult> {
-    try {
-      if (input.fileType === 'audio') {
-        const transcript = await this.transcribeAudio(
-          input.filePath,
-          input.mimeType,
+    if (input.fileType === 'audio') {
+      const transcript = await this.transcribeAudio(
+        input.filePath,
+        input.mimeType,
+      );
+      return this.generateDiagnosisFromText(transcript);
+    }
+
+    const isVideo = input.fileType === 'video';
+
+    // ── Groq ──
+    if (this.canUseGroq()) {
+      try {
+        try {
+          const res = await this.generateGroqJson<DiagnosisResult>({
+            prompt: DIAGNOSIS_PROMPT,
+            filePath: input.filePath,
+            mimeType: input.mimeType,
+          });
+          return this.normalizeDiagnosis(res);
+        } catch (inner) {
+          if (!isVideo) throw inner;
+          // Video rejected as image → retry with text description
+          const res = await this.generateGroqJson<DiagnosisResult>({
+            prompt: VIDEO_TEXT_FALLBACK,
+          });
+          return this.normalizeDiagnosis(res);
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Groq diagnosis failed, trying OpenAI: ${(err as Error).message}`,
         );
-        return await this.generateDiagnosisFromText(transcript);
       }
+    }
 
-      // Try Groq first for image/video
-      if (this.canUseGroq()) {
-        let groqFilePath = input.filePath;
-        let groqMimeType = input.mimeType;
-        let tempFrame: string | null = null;
-
-        if (input.fileType === 'video') {
-          tempFrame = await this.extractVideoMiddleFrame(input.filePath);
-          if (tempFrame) {
-            groqFilePath = tempFrame;
-            groqMimeType = 'image/jpeg';
-          }
+    // ── OpenAI ──
+    if (this.canUseOpenAi()) {
+      try {
+        try {
+          const res = await this.generateOpenAiJson<DiagnosisResult>({
+            prompt: DIAGNOSIS_PROMPT,
+            filePath: input.filePath,
+            mimeType: input.mimeType,
+          });
+          return this.normalizeDiagnosis(res);
+        } catch (inner) {
+          if (!isVideo) throw inner;
+          const res = await this.generateOpenAiJson<DiagnosisResult>({
+            prompt: VIDEO_TEXT_FALLBACK,
+          });
+          return this.normalizeDiagnosis(res);
         }
-
-        if (input.fileType === 'image' || tempFrame) {
-          try {
-            const response = await this.generateGroqJson<DiagnosisResult>({
-              prompt: DIAGNOSIS_PROMPT,
-              filePath: groqFilePath,
-              mimeType: groqMimeType,
-            });
-            return this.normalizeDiagnosis(response);
-          } catch (groqError) {
-            this.logger.warn(
-              `Groq diagnosis failed, trying Gemini: ${(groqError as Error).message}`,
-            );
-          } finally {
-            if (tempFrame) await unlink(tempFrame).catch(() => {});
-          }
-        }
+      } catch (err) {
+        this.logger.warn(
+          `OpenAI diagnosis failed, trying Gemini: ${(err as Error).message}`,
+        );
       }
+    }
 
-      // Fallback to Gemini
-      if (!this.canUseGemini()) {
-        return this.buildMockDiagnosis(input.fileType);
-      }
-
-      const response = await this.generateGeminiJson<DiagnosisResult>({
+    // ── Gemini (supports video natively) ──
+    if (this.canUseGemini()) {
+      const res = await this.generateGeminiJson<DiagnosisResult>({
         prompt: DIAGNOSIS_PROMPT,
         filePath: input.filePath,
         mimeType: input.mimeType,
       });
-
-      return this.normalizeDiagnosis(response);
-    } catch (error) {
-      this.logger.warn(`Diagnosis fallback used: ${(error as Error).message}`);
-      return this.buildMockDiagnosis(input.fileType);
+      return this.normalizeDiagnosis(res);
     }
+
+    throw new InternalServerErrorException(
+      'All AI providers failed for diagnosis',
+    );
   }
 
   async compareQuote(input: {
@@ -172,173 +189,182 @@ export class AiService {
     filePath?: string;
     mimeType?: string;
   }): Promise<QuoteComparisonResult> {
-    try {
-      if (input.quoteText?.trim()) {
-        return this.buildQuoteComparisonFromText(
-          input.quoteText,
-          input.diagnosis,
+    if (input.quoteText?.trim()) {
+      return this.buildQuoteComparisonFromText(
+        input.quoteText,
+        input.diagnosis,
+      );
+    }
+
+    if (!input.filePath || !input.mimeType) {
+      return this.buildQuoteComparisonFromText('', input.diagnosis);
+    }
+
+    const prompt = `${QUOTE_PROMPT}\n\nFair estimate context:\n${JSON.stringify(input.diagnosis)}`;
+
+    // ── Groq ──
+    if (this.canUseGroq()) {
+      try {
+        const res = await this.generateGroqJson<QuoteComparisonResult>({
+          prompt,
+          filePath: input.filePath,
+          mimeType: input.mimeType,
+        });
+        return this.normalizeQuoteComparison(res, input.diagnosis);
+      } catch (err) {
+        this.logger.warn(
+          `Groq quote failed, trying OpenAI: ${(err as Error).message}`,
         );
       }
+    }
 
-      if (!input.filePath || !input.mimeType) {
-        return this.buildQuoteComparisonFromText('', input.diagnosis);
+    // ── OpenAI ──
+    if (this.canUseOpenAi()) {
+      try {
+        const res = await this.generateOpenAiJson<QuoteComparisonResult>({
+          prompt,
+          filePath: input.filePath,
+          mimeType: input.mimeType,
+        });
+        return this.normalizeQuoteComparison(res, input.diagnosis);
+      } catch (err) {
+        this.logger.warn(
+          `OpenAI quote failed, trying Gemini: ${(err as Error).message}`,
+        );
       }
+    }
 
-      const prompt = `${QUOTE_PROMPT}
-
-Fair estimate context:
-${JSON.stringify(input.diagnosis)}`;
-
-      // Try Groq first
-      if (this.canUseGroq()) {
-        try {
-          const response = await this.generateGroqJson<QuoteComparisonResult>({
-            prompt,
-            filePath: input.filePath,
-            mimeType: input.mimeType,
-          });
-          return this.normalizeQuoteComparison(response, input.diagnosis);
-        } catch (groqError) {
-          this.logger.warn(
-            `Groq quote failed, trying Gemini: ${(groqError as Error).message}`,
-          );
-        }
-      }
-
-      // Fallback to Gemini
-      if (!this.canUseGemini()) {
-        return this.buildQuoteComparisonFromText('', input.diagnosis);
-      }
-
-      const response = await this.generateGeminiJson<QuoteComparisonResult>({
+    // ── Gemini ──
+    if (this.canUseGemini()) {
+      const res = await this.generateGeminiJson<QuoteComparisonResult>({
         prompt,
         filePath: input.filePath,
         mimeType: input.mimeType,
       });
-
-      return this.normalizeQuoteComparison(response, input.diagnosis);
-    } catch (error) {
-      this.logger.warn(`Quote fallback used: ${(error as Error).message}`);
-      return this.buildQuoteComparisonFromText(
-        input.quoteText ?? '',
-        input.diagnosis,
-      );
+      return this.normalizeQuoteComparison(res, input.diagnosis);
     }
+
+    throw new InternalServerErrorException(
+      'All AI providers failed for quote comparison',
+    );
   }
 
   async generateChatReply(messages: ChatPromptMessage[]): Promise<string> {
-    try {
-      // Try Groq first
-      if (this.canUseGroq()) {
-        try {
-          const response = await this.generateGroqText({ messages });
-          if (response.trim()) return response.trim();
-        } catch (groqError) {
-          this.logger.warn(
-            `Groq chat failed, trying Gemini: ${(groqError as Error).message}`,
-          );
-        }
+    // ── Groq ──
+    if (this.canUseGroq()) {
+      try {
+        const text = await this.generateGroqText({ messages });
+        if (text.trim()) return text.trim();
+      } catch (err) {
+        this.logger.warn(
+          `Groq chat failed, trying OpenAI: ${(err as Error).message}`,
+        );
       }
+    }
 
-      // Fallback to Gemini
-      if (!this.canUseGemini()) {
-        return this.buildMockChatReply(messages);
+    // ── OpenAI ──
+    if (this.canUseOpenAi()) {
+      try {
+        const text = await this.generateOpenAiText({ messages });
+        if (text.trim()) return text.trim();
+      } catch (err) {
+        this.logger.warn(
+          `OpenAI chat failed, trying Gemini: ${(err as Error).message}`,
+        );
       }
+    }
 
+    // ── Gemini ──
+    if (this.canUseGemini()) {
       const conversation = messages
         .map(
-          (message) =>
-            `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`,
+          (m) =>
+            `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`,
         )
         .join('\n');
-      const response = await this.generateGeminiText({
+      const text = await this.generateGeminiText({
         prompt: `${CHAT_SYSTEM_PROMPT}\n\nConversation:\n${conversation}\n\nAssistant:`,
       });
-
-      return response.trim() || this.buildMockChatReply(messages);
-    } catch (error) {
-      this.logger.warn(`Chat fallback used: ${(error as Error).message}`);
-      return this.buildMockChatReply(messages);
+      return text.trim();
     }
+
+    throw new InternalServerErrorException(
+      'All AI providers failed for chat',
+    );
   }
+
+  // ── Internal orchestration ────────────────────────────────────────────────
 
   private async generateDiagnosisFromText(
     text: string,
   ): Promise<DiagnosisResult> {
     const prompt = `${DIAGNOSIS_PROMPT}\n\nUser description:\n${text}`;
 
-    // Try Groq first
     if (this.canUseGroq()) {
       try {
-        const response = await this.generateGroqJson<DiagnosisResult>({
-          prompt,
-        });
-        return this.normalizeDiagnosis(response);
-      } catch (groqError) {
+        const res = await this.generateGroqJson<DiagnosisResult>({ prompt });
+        return this.normalizeDiagnosis(res);
+      } catch (err) {
         this.logger.warn(
-          `Groq text diagnosis failed, trying Gemini: ${(groqError as Error).message}`,
+          `Groq text diagnosis failed, trying OpenAI: ${(err as Error).message}`,
         );
       }
     }
 
-    if (!this.canUseGemini()) {
-      return this.buildMockDiagnosis('audio', text);
+    if (this.canUseOpenAi()) {
+      try {
+        const res = await this.generateOpenAiJson<DiagnosisResult>({ prompt });
+        return this.normalizeDiagnosis(res);
+      } catch (err) {
+        this.logger.warn(
+          `OpenAI text diagnosis failed, trying Gemini: ${(err as Error).message}`,
+        );
+      }
     }
 
-    try {
-      const response = await this.generateGeminiJson<DiagnosisResult>({
-        prompt,
-      });
-      return this.normalizeDiagnosis(response);
-    } catch (error) {
-      this.logger.warn(
-        `Text diagnosis fallback used: ${(error as Error).message}`,
-      );
-      return this.buildMockDiagnosis('audio', text);
+    if (this.canUseGemini()) {
+      const res = await this.generateGeminiJson<DiagnosisResult>({ prompt });
+      return this.normalizeDiagnosis(res);
     }
+
+    throw new InternalServerErrorException(
+      'All AI providers failed for text diagnosis',
+    );
   }
 
   private async transcribeAudio(
     filePath: string,
     mimeType: string,
   ): Promise<string> {
-    // Try Groq whisper first
     if (this.canUseGroq()) {
       try {
         return await this.transcribeAudioGroq(filePath);
-      } catch (groqError) {
+      } catch (err) {
         this.logger.warn(
-          `Groq transcription failed, trying OpenAI: ${(groqError as Error).message}`,
+          `Groq transcription failed, trying OpenAI: ${(err as Error).message}`,
         );
       }
     }
 
-    // Fallback to OpenAI
-    if (!this.canUseOpenAi()) {
-      return 'Customer reports rattling noise near the front brakes and reduced stopping performance.';
-    }
-
-    try {
+    if (this.canUseOpenAi()) {
       const openai = new OpenAI({ apiKey: this.openAiApiKey });
       const buffer = await readFile(filePath);
       const file = await toFile(buffer, basename(filePath), {
-        type: mimeType || lookupMime(filePath) || 'audio/mpeg',
+        type: mimeType || (lookupMime(filePath) as string) || 'audio/mpeg',
       });
       const transcript = await openai.audio.transcriptions.create({
         file,
         model: 'whisper-1',
       });
-
       return transcript.text;
-    } catch (error) {
-      this.logger.warn(
-        `Transcription fallback used: ${(error as Error).message}`,
-      );
-      return 'Customer reports rattling noise near the front brakes and reduced stopping performance.';
     }
+
+    throw new InternalServerErrorException(
+      'No transcription API available (Groq and OpenAI both unconfigured or failed)',
+    );
   }
 
-  // ── Groq methods ──────────────────────────────────────────────────────────
+  // ── Groq ──────────────────────────────────────────────────────────────────
 
   private async generateGroqJson<T>(input: {
     prompt: string;
@@ -360,7 +386,9 @@ ${JSON.stringify(input.diagnosis)}`;
         { type: 'text', text: input.prompt },
         {
           type: 'image_url',
-          image_url: { url: `data:${input.mimeType};base64,${base64}` },
+          image_url: {
+            url: `data:${input.mimeType};base64,${base64}`,
+          },
         },
       ];
     } else {
@@ -395,17 +423,15 @@ ${JSON.stringify(input.diagnosis)}`;
   }): Promise<string> {
     const groq = new Groq({ apiKey: this.groqApiKey });
 
-    const groqMessages = [
-      { role: 'system' as const, content: CHAT_SYSTEM_PROMPT },
-      ...input.messages.map((msg) => ({
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-      })),
-    ];
-
     const completion = await groq.chat.completions.create({
       model: GROQ_MODEL,
-      messages: groqMessages,
+      messages: [
+        { role: 'system', content: CHAT_SYSTEM_PROMPT },
+        ...input.messages.map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        })),
+      ],
       temperature: 0.7,
     });
 
@@ -422,47 +448,81 @@ ${JSON.stringify(input.diagnosis)}`;
     return transcription.text;
   }
 
-  private async extractVideoMiddleFrame(
-    videoPath: string,
-  ): Promise<string | null> {
-    try {
-      const framePath = join(tmpdir(), `frame_${Date.now()}.jpg`);
+  // ── OpenAI ────────────────────────────────────────────────────────────────
 
-      const { stdout } = await execFileAsync('ffprobe', [
-        '-v',
-        'quiet',
-        '-print_format',
-        'json',
-        '-show_format',
-        videoPath,
-      ]);
+  private async generateOpenAiJson<T>(input: {
+    prompt: string;
+    filePath?: string;
+    mimeType?: string;
+  }): Promise<T> {
+    const openai = new OpenAI({ apiKey: this.openAiApiKey });
+    const hasFile = Boolean(input.filePath && input.mimeType);
 
-      const info = JSON.parse(stdout) as {
-        format?: { duration?: string };
-      };
-      const duration = parseFloat(info.format?.duration ?? '2');
-      const midpoint = String(Math.max(duration / 2, 0.5));
+    type TextPart = { type: 'text'; text: string };
+    type ImagePart = { type: 'image_url'; image_url: { url: string } };
 
-      await execFileAsync('ffmpeg', [
-        '-ss',
-        midpoint,
-        '-i',
-        videoPath,
-        '-frames:v',
-        '1',
-        '-q:v',
-        '2',
-        '-y',
-        framePath,
-      ]);
+    let userContent: string | Array<TextPart | ImagePart>;
 
-      return framePath;
-    } catch {
-      return null;
+    if (hasFile) {
+      const data = await readFile(input.filePath!);
+      const base64 = data.toString('base64');
+      userContent = [
+        { type: 'text', text: input.prompt },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:${input.mimeType};base64,${base64}`,
+          },
+        },
+      ];
+    } else {
+      userContent = input.prompt;
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any = {
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You must respond only in Russian language. Return ONLY valid JSON, no markdown.',
+        },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.3,
+    };
+
+    if (!hasFile) {
+      params.response_format = { type: 'json_object' };
+    }
+
+    const completion = await openai.chat.completions.create(params);
+    const text = completion.choices[0]?.message?.content ?? '';
+    return safeJsonParse<T>(text);
   }
 
-  // ── Gemini methods (kept intact as fallback) ──────────────────────────────
+  private async generateOpenAiText(input: {
+    messages: ChatPromptMessage[];
+  }): Promise<string> {
+    const openai = new OpenAI({ apiKey: this.openAiApiKey });
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: CHAT_SYSTEM_PROMPT },
+        ...input.messages.map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        })),
+      ],
+      temperature: 0.7,
+    });
+
+    return completion.choices[0]?.message?.content ?? '';
+  }
+
+  // ── Gemini (fallback, kept intact) ───────────────────────────────────────
 
   private async generateGeminiJson<T>(input: {
     prompt: string;
@@ -507,21 +567,19 @@ ${JSON.stringify(input.diagnosis)}`;
           `Gemini model ${modelName} failed: ${lastError.message}`,
         );
 
-        const message = lastError.message.toLowerCase();
-        const shouldTryNextModel =
-          message.includes('404') ||
-          message.includes('not found') ||
-          message.includes('not supported') ||
-          message.includes('503') ||
-          message.includes('service unavailable') ||
-          message.includes('high demand') ||
-          message.includes('overloaded') ||
-          message.includes('429') ||
-          message.includes('quota');
+        const msg = lastError.message.toLowerCase();
+        const retryable =
+          msg.includes('404') ||
+          msg.includes('not found') ||
+          msg.includes('not supported') ||
+          msg.includes('503') ||
+          msg.includes('service unavailable') ||
+          msg.includes('high demand') ||
+          msg.includes('overloaded') ||
+          msg.includes('429') ||
+          msg.includes('quota');
 
-        if (!shouldTryNextModel) {
-          throw lastError;
-        }
+        if (!retryable) throw lastError;
       }
     }
 
@@ -553,28 +611,26 @@ ${JSON.stringify(input.diagnosis)}`;
           `Gemini chat model ${modelName} failed: ${lastError.message}`,
         );
 
-        const message = lastError.message.toLowerCase();
-        const shouldTryNextModel =
-          message.includes('404') ||
-          message.includes('not found') ||
-          message.includes('not supported') ||
-          message.includes('503') ||
-          message.includes('service unavailable') ||
-          message.includes('high demand') ||
-          message.includes('overloaded') ||
-          message.includes('429') ||
-          message.includes('quota');
+        const msg = lastError.message.toLowerCase();
+        const retryable =
+          msg.includes('404') ||
+          msg.includes('not found') ||
+          msg.includes('not supported') ||
+          msg.includes('503') ||
+          msg.includes('service unavailable') ||
+          msg.includes('high demand') ||
+          msg.includes('overloaded') ||
+          msg.includes('429') ||
+          msg.includes('quota');
 
-        if (!shouldTryNextModel) {
-          throw lastError;
-        }
+        if (!retryable) throw lastError;
       }
     }
 
     throw lastError ?? new Error('Gemini chat request failed');
   }
 
-  // ── Normalizers & mocks ───────────────────────────────────────────────────
+  // ── Normalizers ───────────────────────────────────────────────────────────
 
   private normalizeDiagnosis(result: DiagnosisResult): DiagnosisResult {
     return {
@@ -616,64 +672,6 @@ ${JSON.stringify(input.diagnosis)}`;
     };
   }
 
-  private buildMockDiagnosis(
-    fileType: 'image' | 'audio' | 'video',
-    textHint = '',
-  ): DiagnosisResult {
-    const brakeFocused =
-      textHint.toLowerCase().includes('brake') || fileType !== 'video';
-    const parts = brakeFocused
-      ? [
-          {
-            name: 'Тормозные колодки',
-            price_min: 120,
-            price_max: 350,
-            currency: 'TJS',
-          },
-          {
-            name: 'Тормозные диски',
-            price_min: 200,
-            price_max: 600,
-            currency: 'TJS',
-          },
-        ]
-      : [
-          {
-            name: 'Датчик каталитического нейтрализатора',
-            price_min: 350,
-            price_max: 900,
-            currency: 'TJS',
-          },
-          {
-            name: 'Комплект прокладок выхлопной системы',
-            price_min: 80,
-            price_max: 220,
-            currency: 'TJS',
-          },
-        ];
-
-    const laborMin = brakeFocused ? 160 : 240;
-    const laborMax = brakeFocused ? 320 : 480;
-    const partsMin = parts.reduce((sum, part) => sum + part.price_min, 0);
-    const partsMax = parts.reduce((sum, part) => sum + part.price_max, 0);
-
-    return {
-      problem: brakeFocused
-        ? 'Износ тормозных компонентов'
-        : 'Неисправность выхлопной системы',
-      description: brakeFocused
-        ? 'Загруженные данные указывают на износ тормозных колодок и возможное повреждение дисков, что снижает эффективность торможения и вызывает скрип или дребезжание.'
-        : 'Загруженные данные указывают на проблему с выхлопной системой или токсичностью отработавших газов, что часто сопровождается снижением мощности и индикатором ошибки P0420.',
-      severity: brakeFocused ? 'high' : 'medium',
-      parts_needed: parts,
-      labor_cost_min: laborMin,
-      labor_cost_max: laborMax,
-      total_cost_min: partsMin + laborMin,
-      total_cost_max: partsMax + laborMax,
-      confidence: brakeFocused ? 0.84 : 0.76,
-    };
-  }
-
   private buildQuoteComparisonFromText(
     quoteText: string,
     diagnosis: DiagnosisResult,
@@ -682,16 +680,13 @@ ${JSON.stringify(input.diagnosis)}`;
     const mechanicTotal =
       extracted.length > 0
         ? Number(extracted[extracted.length - 1])
-        : Number((diagnosis.total_cost_max + diagnosis.total_cost_min) / 2);
+        : (diagnosis.total_cost_max + diagnosis.total_cost_min) / 2;
     const fairMin = diagnosis.total_cost_min;
     const fairMax = diagnosis.total_cost_max;
 
     let verdict: QuoteComparisonResult['verdict'] = 'fair';
-    if (mechanicTotal > fairMax) {
-      verdict = 'overpriced';
-    } else if (mechanicTotal < fairMin) {
-      verdict = 'underpriced';
-    }
+    if (mechanicTotal > fairMax) verdict = 'overpriced';
+    else if (mechanicTotal < fairMin) verdict = 'underpriced';
 
     const overchargeAmount =
       verdict === 'overpriced' ? mechanicTotal - fairMax : 0;
@@ -723,46 +718,18 @@ ${JSON.stringify(input.diagnosis)}`;
     };
   }
 
-  private buildMockChatReply(messages: ChatPromptMessage[]): string {
-    const lastUserMessage =
-      [...messages].reverse().find((message) => message.role === 'user')
-        ?.content ?? '';
-    const lower = lastUserMessage.toLowerCase();
-
-    if (lower.includes('тормоз') || lower.includes('brake')) {
-      return 'Похоже на проблему с тормозной системой. Проверь уровень тормозной жидкости, состояние колодок и дисков. Если есть скрежет, провал педали или машина плохо тормозит, лучше не ехать дальше и обратиться в сервис.';
-    }
-
-    if (lower.includes('двиг') || lower.includes('engine')) {
-      return 'По двигателю сначала уточни симптомы: горит ли Check Engine, есть ли вибрация, дым, запах бензина, потеря мощности или коды OBD. Безопасный первый шаг — считать ошибки OBD и проверить уровень масла и охлаждающей жидкости.';
-    }
-
-    if (
-      lower.includes('цена') ||
-      lower.includes('смет') ||
-      lower.includes('cost')
-    ) {
-      return 'Опиши, какие работы и запчасти указаны в смете, а также итоговую сумму. Я сравню её с типичным диапазоном и отмечу подозрительные позиции.';
-    }
-
-    return 'Опиши симптомы подробнее: марка, модель, год, пробег, когда появляется проблема, есть ли звуки, запахи, вибрации или ошибки на панели. По этим данным я подскажу вероятные причины и следующий безопасный шаг.';
-  }
-
   private normalizeSeverity(value?: string): DiagnosisResult['severity'] {
-    if (value === 'low' || value === 'medium' || value === 'high') {
-      return value;
-    }
-
+    if (value === 'low' || value === 'medium' || value === 'high') return value;
     return 'medium';
   }
 
   private normalizeVerdict(value?: string): QuoteComparisonResult['verdict'] {
-    if (value === 'fair' || value === 'overpriced' || value === 'underpriced') {
+    if (value === 'fair' || value === 'overpriced' || value === 'underpriced')
       return value;
-    }
-
     return 'fair';
   }
+
+  // ── Guards ────────────────────────────────────────────────────────────────
 
   private canUseGroq(): boolean {
     return Boolean(
@@ -772,7 +739,7 @@ ${JSON.stringify(input.diagnosis)}`;
     );
   }
 
-  private canUseGemini() {
+  private canUseGemini(): boolean {
     return Boolean(
       this.geminiApiKey &&
         this.geminiApiKey !== 'xxx' &&
@@ -780,7 +747,7 @@ ${JSON.stringify(input.diagnosis)}`;
     );
   }
 
-  private canUseOpenAi() {
+  private canUseOpenAi(): boolean {
     return Boolean(
       this.openAiApiKey &&
         this.openAiApiKey !== 'xxx' &&
