@@ -8,9 +8,14 @@ import { GoogleGenerativeAI, Part } from '@google/generative-ai';
 import { OpenAI, toFile } from 'openai';
 import Groq from 'groq-sdk';
 import { lookup as lookupMime } from 'mime-types';
-import { readFile } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
 import { createReadStream } from 'fs';
-import { basename } from 'path';
+import { basename, join } from 'path';
+import { tmpdir } from 'os';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import { safeJsonParse } from './json.util';
 import {
   ChatPromptMessage,
@@ -124,36 +129,46 @@ export class AiService {
 
     const isVideo = input.fileType === 'video';
 
-    // For VIDEO: OpenAI first (bytes as image/jpeg) → Groq → Gemini native video last
+    // For VIDEO: extract real JPEG frame via ffmpeg → OpenAI/Groq with frame → Gemini native fallback
     if (isVideo) {
-      if (this.canUseOpenAi()) {
-        try {
-          const res = await this.generateOpenAiJson<DiagnosisResult>({
-            prompt: VIDEO_FRAME_PROMPT,
-            filePath: input.filePath,
-            mimeType: 'image/jpeg',
-          });
-          return this.normalizeDiagnosis(res);
-        } catch (err) {
-          this.logger.warn(
-            `OpenAI video diagnosis failed, trying Groq: ${(err as Error).message}`,
-          );
-        }
-      }
+      const framePath = await this.extractVideoFrame(input.filePath);
 
-      if (this.canUseGroq()) {
-        try {
-          const res = await this.generateGroqJson<DiagnosisResult>({
-            prompt: VIDEO_FRAME_PROMPT,
-            filePath: input.filePath,
-            mimeType: 'image/jpeg',
-          });
-          return this.normalizeDiagnosis(res);
-        } catch (err) {
-          this.logger.warn(
-            `Groq video diagnosis failed, trying Gemini: ${(err as Error).message}`,
-          );
+      if (framePath) {
+        if (this.canUseOpenAi()) {
+          try {
+            const res = await this.generateOpenAiJson<DiagnosisResult>({
+              prompt: VIDEO_FRAME_PROMPT,
+              filePath: framePath,
+              mimeType: 'image/jpeg',
+            });
+            await unlink(framePath).catch(() => null);
+            return this.normalizeDiagnosis(res);
+          } catch (err) {
+            this.logger.warn(
+              `OpenAI video frame diagnosis failed, trying Groq: ${(err as Error).message}`,
+            );
+          }
         }
+
+        if (this.canUseGroq()) {
+          try {
+            const res = await this.generateGroqJson<DiagnosisResult>({
+              prompt: VIDEO_FRAME_PROMPT,
+              filePath: framePath,
+              mimeType: 'image/jpeg',
+            });
+            await unlink(framePath).catch(() => null);
+            return this.normalizeDiagnosis(res);
+          } catch (err) {
+            this.logger.warn(
+              `Groq video frame diagnosis failed, trying Gemini: ${(err as Error).message}`,
+            );
+          }
+        }
+
+        await unlink(framePath).catch(() => null);
+      } else {
+        this.logger.warn('ffmpeg frame extraction failed, falling back to Gemini native video');
       }
 
       if (this.canUseGemini()) {
@@ -787,6 +802,21 @@ export class AiService {
     if (value === 'fair' || value === 'overpriced' || value === 'underpriced')
       return value;
     return 'fair';
+  }
+
+  // ── Video helpers ─────────────────────────────────────────────────────────
+
+  private async extractVideoFrame(videoPath: string): Promise<string | null> {
+    const framePath = join(tmpdir(), `frame_${Date.now()}.jpg`);
+    try {
+      await execAsync(
+        `ffmpeg -y -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`,
+      );
+      return framePath;
+    } catch (err) {
+      this.logger.warn(`ffmpeg extraction failed: ${(err as Error).message}`);
+      return null;
+    }
   }
 
   // ── Guards ────────────────────────────────────────────────────────────────
