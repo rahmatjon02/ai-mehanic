@@ -14,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { QuoteModule } from './quote/quote.module';
 import { UsersModule } from './users/users.module';
 import { VinModule } from './vin/vin.module';
+import { ObdModule } from './obd/obd.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { VinModule } from './vin/vin.module';
     VinModule,
     CarsModule,
     HealthModule,
+    ObdModule,
   ],
   controllers: [AppController],
   providers: [],
