@@ -86,10 +86,9 @@ const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechani
 const CHAT_SYSTEM_PROMPT =
   'You must respond only in Russian language. You are AI Mechanic, a helpful automotive assistant. Give practical, safe, concise advice. Ask for missing car details when needed. If the issue could be dangerous, recommend stopping driving and contacting a mechanic.';
 
-const VIDEO_TEXT_FALLBACK =
+const VIDEO_FRAME_PROMPT =
   `${DIAGNOSIS_PROMPT}\n\n` +
-  `Пользователь загрузил видеозапись проблемы с автомобилем. ` +
-  `Выполните диагностику на основе наиболее типичных неисправностей.`;
+  `This is a frame from a car video. Analyze what car problem you can see.`;
 
 @Injectable()
 export class AiService {
@@ -125,8 +124,38 @@ export class AiService {
 
     const isVideo = input.fileType === 'video';
 
-    // For VIDEO: Gemini supports video natively → OpenAI text fallback → Groq text fallback
+    // For VIDEO: OpenAI first (bytes as image/jpeg) → Groq → Gemini native video last
     if (isVideo) {
+      if (this.canUseOpenAi()) {
+        try {
+          const res = await this.generateOpenAiJson<DiagnosisResult>({
+            prompt: VIDEO_FRAME_PROMPT,
+            filePath: input.filePath,
+            mimeType: 'image/jpeg',
+          });
+          return this.normalizeDiagnosis(res);
+        } catch (err) {
+          this.logger.warn(
+            `OpenAI video diagnosis failed, trying Groq: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      if (this.canUseGroq()) {
+        try {
+          const res = await this.generateGroqJson<DiagnosisResult>({
+            prompt: VIDEO_FRAME_PROMPT,
+            filePath: input.filePath,
+            mimeType: 'image/jpeg',
+          });
+          return this.normalizeDiagnosis(res);
+        } catch (err) {
+          this.logger.warn(
+            `Groq video diagnosis failed, trying Gemini: ${(err as Error).message}`,
+          );
+        }
+      }
+
       if (this.canUseGemini()) {
         try {
           const res = await this.generateGeminiJson<DiagnosisResult>({
@@ -137,33 +166,7 @@ export class AiService {
           return this.normalizeDiagnosis(res);
         } catch (err) {
           this.logger.warn(
-            `Gemini video diagnosis failed, trying text fallback: ${(err as Error).message}`,
-          );
-        }
-      }
-
-      if (this.canUseOpenAi()) {
-        try {
-          const res = await this.generateOpenAiJson<DiagnosisResult>({
-            prompt: VIDEO_TEXT_FALLBACK,
-          });
-          return this.normalizeDiagnosis(res);
-        } catch (err) {
-          this.logger.warn(
-            `OpenAI video text fallback failed, trying Groq: ${(err as Error).message}`,
-          );
-        }
-      }
-
-      if (this.canUseGroq()) {
-        try {
-          const res = await this.generateGroqJson<DiagnosisResult>({
-            prompt: VIDEO_TEXT_FALLBACK,
-          });
-          return this.normalizeDiagnosis(res);
-        } catch (err) {
-          this.logger.warn(
-            `Groq video text fallback failed: ${(err as Error).message}`,
+            `Gemini video diagnosis failed: ${(err as Error).message}`,
           );
         }
       }
