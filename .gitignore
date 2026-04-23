@@ -4,6 +4,7 @@ dist
 build
 *.lock
 !package-lock.json
+mobile
 
 # Environment variables
 .env

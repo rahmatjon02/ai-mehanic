@@ -40,9 +40,13 @@ const ALLOWED_MIME_TYPES = new Set([
   'audio/wav',
   'audio/mp4',
   'audio/m4a',
+  'audio/webm',
+  'audio/ogg',
+  'audio/ogg;codecs=opus',
   'video/mp4',
   'video/quicktime',
   'video/x-msvideo',
+  'video/webm',
   'text/plain',
 ]);
 

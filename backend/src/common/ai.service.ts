@@ -173,7 +173,22 @@ export class AiService {
       );
     }
 
-    // For IMAGE: OpenAI GPT-4o → Gemini → Groq (best vision accuracy order)
+    // For IMAGE: Groq → OpenAI → Gemini
+    if (this.canUseGroq()) {
+      try {
+        const res = await this.generateGroqJson<DiagnosisResult>({
+          prompt: DIAGNOSIS_PROMPT,
+          filePath: input.filePath,
+          mimeType: input.mimeType,
+        });
+        return this.normalizeDiagnosis(res);
+      } catch (err) {
+        this.logger.warn(
+          `Groq image diagnosis failed, trying OpenAI: ${(err as Error).message}`,
+        );
+      }
+    }
+
     if (this.canUseOpenAi()) {
       try {
         const res = await this.generateOpenAiJson<DiagnosisResult>({
@@ -199,22 +214,7 @@ export class AiService {
         return this.normalizeDiagnosis(res);
       } catch (err) {
         this.logger.warn(
-          `Gemini image diagnosis failed, trying Groq: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    if (this.canUseGroq()) {
-      try {
-        const res = await this.generateGroqJson<DiagnosisResult>({
-          prompt: DIAGNOSIS_PROMPT,
-          filePath: input.filePath,
-          mimeType: input.mimeType,
-        });
-        return this.normalizeDiagnosis(res);
-      } catch (err) {
-        this.logger.warn(
-          `Groq image diagnosis failed: ${(err as Error).message}`,
+          `Gemini image diagnosis failed: ${(err as Error).message}`,
         );
       }
     }
