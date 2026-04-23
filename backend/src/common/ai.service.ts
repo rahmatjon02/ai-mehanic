@@ -86,10 +86,9 @@ const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechani
 const CHAT_SYSTEM_PROMPT =
   'You must respond only in Russian language. You are AI Mechanic, a helpful automotive assistant. Give practical, safe, concise advice. Ask for missing car details when needed. If the issue could be dangerous, recommend stopping driving and contacting a mechanic.';
 
-const VIDEO_TEXT_FALLBACK =
+const VIDEO_FRAME_PROMPT =
   `${DIAGNOSIS_PROMPT}\n\n` +
-  `Пользователь загрузил видеозапись проблемы с автомобилем. ` +
-  `Выполните диагностику на основе наиболее типичных неисправностей.`;
+  `This is a frame from a car video. Analyze what car problem you can see.`;
 
 @Injectable()
 export class AiService {
@@ -115,18 +114,20 @@ export class AiService {
     mimeType: string;
     fileType: 'image' | 'audio' | 'video';
   }): Promise<DiagnosisResult> {
+    // For AUDIO: OpenAI whisper-1 → Groq whisper → Gemini native audio
     if (input.fileType === 'audio') {
-      const transcript = await this.transcribeAudio(
-        input.filePath,
-        input.mimeType,
-      );
-      return this.generateDiagnosisFromText(transcript);
-    }
+      try {
+        const transcript = await this.transcribeAudio(
+          input.filePath,
+          input.mimeType,
+        );
+        return this.generateDiagnosisFromText(transcript);
+      } catch (err) {
+        this.logger.warn(
+          `Audio transcription failed, trying Gemini native audio: ${(err as Error).message}`,
+        );
+      }
 
-    const isVideo = input.fileType === 'video';
-
-    // For VIDEO: Gemini supports video natively → OpenAI text fallback → Groq text fallback
-    if (isVideo) {
       if (this.canUseGemini()) {
         try {
           const res = await this.generateGeminiJson<DiagnosisResult>({
@@ -137,20 +138,29 @@ export class AiService {
           return this.normalizeDiagnosis(res);
         } catch (err) {
           this.logger.warn(
-            `Gemini video diagnosis failed, trying text fallback: ${(err as Error).message}`,
+            `Gemini audio diagnosis failed: ${(err as Error).message}`,
           );
         }
       }
 
+      throw new InternalServerErrorException(
+        'All AI providers failed for audio diagnosis',
+      );
+    }
+
+    // For VIDEO: OpenAI first (bytes as image/jpeg) → Groq → Gemini native video last
+    if (input.fileType === 'video') {
       if (this.canUseOpenAi()) {
         try {
           const res = await this.generateOpenAiJson<DiagnosisResult>({
-            prompt: VIDEO_TEXT_FALLBACK,
+            prompt: VIDEO_FRAME_PROMPT,
+            filePath: input.filePath,
+            mimeType: 'image/jpeg',
           });
           return this.normalizeDiagnosis(res);
         } catch (err) {
           this.logger.warn(
-            `OpenAI video text fallback failed, trying Groq: ${(err as Error).message}`,
+            `OpenAI video diagnosis failed, trying Groq: ${(err as Error).message}`,
           );
         }
       }
@@ -158,12 +168,29 @@ export class AiService {
       if (this.canUseGroq()) {
         try {
           const res = await this.generateGroqJson<DiagnosisResult>({
-            prompt: VIDEO_TEXT_FALLBACK,
+            prompt: VIDEO_FRAME_PROMPT,
+            filePath: input.filePath,
+            mimeType: 'image/jpeg',
           });
           return this.normalizeDiagnosis(res);
         } catch (err) {
           this.logger.warn(
-            `Groq video text fallback failed: ${(err as Error).message}`,
+            `Groq video diagnosis failed, trying Gemini: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      if (this.canUseGemini()) {
+        try {
+          const res = await this.generateGeminiJson<DiagnosisResult>({
+            prompt: DIAGNOSIS_PROMPT,
+            filePath: input.filePath,
+            mimeType: input.mimeType,
+          });
+          return this.normalizeDiagnosis(res);
+        } catch (err) {
+          this.logger.warn(
+            `Gemini video diagnosis failed: ${(err as Error).message}`,
           );
         }
       }
@@ -389,27 +416,33 @@ export class AiService {
     filePath: string,
     mimeType: string,
   ): Promise<string> {
+    if (this.canUseOpenAi()) {
+      try {
+        const openai = new OpenAI({ apiKey: this.openAiApiKey });
+        const buffer = await readFile(filePath);
+        const file = await toFile(buffer, basename(filePath), {
+          type: mimeType || (lookupMime(filePath) as string) || 'audio/mpeg',
+        });
+        const transcript = await openai.audio.transcriptions.create({
+          file,
+          model: 'whisper-1',
+        });
+        return transcript.text;
+      } catch (err) {
+        this.logger.warn(
+          `OpenAI transcription failed, trying Groq: ${(err as Error).message}`,
+        );
+      }
+    }
+
     if (this.canUseGroq()) {
       try {
         return await this.transcribeAudioGroq(filePath);
       } catch (err) {
         this.logger.warn(
-          `Groq transcription failed, trying OpenAI: ${(err as Error).message}`,
+          `Groq transcription failed: ${(err as Error).message}`,
         );
       }
-    }
-
-    if (this.canUseOpenAi()) {
-      const openai = new OpenAI({ apiKey: this.openAiApiKey });
-      const buffer = await readFile(filePath);
-      const file = await toFile(buffer, basename(filePath), {
-        type: mimeType || (lookupMime(filePath) as string) || 'audio/mpeg',
-      });
-      const transcript = await openai.audio.transcriptions.create({
-        file,
-        model: 'whisper-1',
-      });
-      return transcript.text;
     }
 
     if (process.env.NODE_ENV === 'test') {
@@ -417,7 +450,7 @@ export class AiService {
     }
 
     throw new InternalServerErrorException(
-      'No transcription API available (Groq and OpenAI both unconfigured or failed)',
+      'No transcription API available (OpenAI and Groq both unconfigured or failed)',
     );
   }
 
