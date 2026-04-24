@@ -8,14 +8,9 @@ import { GoogleGenerativeAI, Part } from '@google/generative-ai';
 import { OpenAI, toFile } from 'openai';
 import Groq from 'groq-sdk';
 import { lookup as lookupMime } from 'mime-types';
-import { readFile, unlink } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { createReadStream } from 'fs';
-import { basename, join } from 'path';
-import { tmpdir } from 'os';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import { basename } from 'path';
 import { safeJsonParse } from './json.util';
 import {
   ChatPromptMessage,
@@ -25,6 +20,8 @@ import {
 
 const GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 const GROQ_AUDIO_MODEL = 'whisper-large-v3';
+const GEMINI_PRIMARY = 'gemini-2.5-flash';
+const GEMINI_FALLBACK = 'gemini-2.0-flash';
 
 const DIAGNOSIS_PROMPT = `You must respond only in Russian language. You are an expert auto mechanic specializing in the Tajikistan (Dushanbe) market. Analyze this car problem.
 
@@ -91,23 +88,15 @@ const QUOTE_PROMPT = `You must respond only in Russian language. Compare mechani
 const CHAT_SYSTEM_PROMPT =
   'You must respond only in Russian language. You are AI Mechanic, a helpful automotive assistant. Give practical, safe, concise advice. Ask for missing car details when needed. If the issue could be dangerous, recommend stopping driving and contacting a mechanic.';
 
-const VIDEO_FRAME_PROMPT =
-  `${DIAGNOSIS_PROMPT}\n\n` +
-  `This is a frame from a car video. Analyze what car problem you can see.`;
-
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly geminiApiKey: string;
-  private readonly geminiModel: string;
   private readonly openAiApiKey: string;
   private readonly groqApiKey: string;
 
   constructor(private readonly configService: ConfigService) {
     this.geminiApiKey = this.configService.get<string>('GEMINI_API_KEY') ?? '';
-    this.geminiModel =
-      this.configService.get<string>('GEMINI_MODEL')?.trim() ||
-      'gemini-2.0-flash';
     this.openAiApiKey = this.configService.get<string>('OPENAI_API_KEY') ?? '';
     this.groqApiKey = this.configService.get<string>('GROQ_API_KEY') ?? '';
   }
@@ -119,58 +108,8 @@ export class AiService {
     mimeType: string;
     fileType: 'image' | 'audio' | 'video';
   }): Promise<DiagnosisResult> {
+    // АУДИО: Gemini 2.5 Flash первый (весь файл) → Groq Whisper запасной
     if (input.fileType === 'audio') {
-      const transcript = await this.transcribeAudio(
-        input.filePath,
-        input.mimeType,
-      );
-      return this.generateDiagnosisFromText(transcript);
-    }
-
-    const isVideo = input.fileType === 'video';
-
-    // For VIDEO: extract real JPEG frame via ffmpeg → OpenAI/Groq with frame → Gemini native fallback
-    if (isVideo) {
-      const framePath = await this.extractVideoFrame(input.filePath);
-
-      if (framePath) {
-        if (this.canUseOpenAi()) {
-          try {
-            const res = await this.generateOpenAiJson<DiagnosisResult>({
-              prompt: VIDEO_FRAME_PROMPT,
-              filePath: framePath,
-              mimeType: 'image/jpeg',
-            });
-            await unlink(framePath).catch(() => null);
-            return this.normalizeDiagnosis(res);
-          } catch (err) {
-            this.logger.warn(
-              `OpenAI video frame diagnosis failed, trying Groq: ${(err as Error).message}`,
-            );
-          }
-        }
-
-        if (this.canUseGroq()) {
-          try {
-            const res = await this.generateGroqJson<DiagnosisResult>({
-              prompt: VIDEO_FRAME_PROMPT,
-              filePath: framePath,
-              mimeType: 'image/jpeg',
-            });
-            await unlink(framePath).catch(() => null);
-            return this.normalizeDiagnosis(res);
-          } catch (err) {
-            this.logger.warn(
-              `Groq video frame diagnosis failed, trying Gemini: ${(err as Error).message}`,
-            );
-          }
-        }
-
-        await unlink(framePath).catch(() => null);
-      } else {
-        this.logger.warn('ffmpeg frame extraction failed, falling back to Gemini native video');
-      }
-
       if (this.canUseGemini()) {
         try {
           const res = await this.generateGeminiJson<DiagnosisResult>({
@@ -181,9 +120,66 @@ export class AiService {
           return this.normalizeDiagnosis(res);
         } catch (err) {
           this.logger.warn(
-            `Gemini video diagnosis failed: ${(err as Error).message}`,
+            `Gemini audio diagnosis failed, trying Groq: ${(err as Error).message}`,
           );
         }
+      }
+
+      if (this.canUseGroq()) {
+        try {
+          const transcript = await this.transcribeAudioGroq(input.filePath);
+          return this.generateDiagnosisFromText(transcript);
+        } catch (err) {
+          this.logger.warn(
+            `Groq audio diagnosis failed: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      if (process.env.NODE_ENV === 'test') {
+        return this.buildMockDiagnosis('audio');
+      }
+
+      throw new InternalServerErrorException(
+        'All AI providers failed for audio diagnosis',
+      );
+    }
+
+    // ВИДЕО: Gemini 2.5 Flash первый (весь видеофайл) → Groq текстовый запасной
+    if (input.fileType === 'video') {
+      if (this.canUseGemini()) {
+        try {
+          const res = await this.generateGeminiJson<DiagnosisResult>({
+            prompt: DIAGNOSIS_PROMPT,
+            filePath: input.filePath,
+            mimeType: input.mimeType,
+          });
+          return this.normalizeDiagnosis(res);
+        } catch (err) {
+          this.logger.warn(
+            `Gemini video diagnosis failed, trying Groq: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      if (this.canUseGroq()) {
+        try {
+          const res = await this.generateGroqJson<DiagnosisResult>({
+            prompt:
+              `${DIAGNOSIS_PROMPT}\n\n` +
+              `Пользователь загрузил видео с проблемой автомобиля. ` +
+              `Выполни диагностику на основе наиболее вероятных неисправностей.`,
+          });
+          return this.normalizeDiagnosis(res);
+        } catch (err) {
+          this.logger.warn(
+            `Groq video text fallback failed: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      if (process.env.NODE_ENV === 'test') {
+        return this.buildMockDiagnosis('video');
       }
 
       throw new InternalServerErrorException(
@@ -191,37 +187,7 @@ export class AiService {
       );
     }
 
-    // For IMAGE: Groq → OpenAI → Gemini
-    if (this.canUseGroq()) {
-      try {
-        const res = await this.generateGroqJson<DiagnosisResult>({
-          prompt: DIAGNOSIS_PROMPT,
-          filePath: input.filePath,
-          mimeType: input.mimeType,
-        });
-        return this.normalizeDiagnosis(res);
-      } catch (err) {
-        this.logger.warn(
-          `Groq image diagnosis failed, trying OpenAI: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    if (this.canUseOpenAi()) {
-      try {
-        const res = await this.generateOpenAiJson<DiagnosisResult>({
-          prompt: DIAGNOSIS_PROMPT,
-          filePath: input.filePath,
-          mimeType: input.mimeType,
-        });
-        return this.normalizeDiagnosis(res);
-      } catch (err) {
-        this.logger.warn(
-          `OpenAI image diagnosis failed, trying Gemini: ${(err as Error).message}`,
-        );
-      }
-    }
-
+    // ФОТО: Gemini 2.5 Flash первый → Groq запасной
     if (this.canUseGemini()) {
       try {
         const res = await this.generateGeminiJson<DiagnosisResult>({
@@ -232,9 +198,28 @@ export class AiService {
         return this.normalizeDiagnosis(res);
       } catch (err) {
         this.logger.warn(
-          `Gemini image diagnosis failed: ${(err as Error).message}`,
+          `Gemini image diagnosis failed, trying Groq: ${(err as Error).message}`,
         );
       }
+    }
+
+    if (this.canUseGroq()) {
+      try {
+        const res = await this.generateGroqJson<DiagnosisResult>({
+          prompt: DIAGNOSIS_PROMPT,
+          filePath: input.filePath,
+          mimeType: input.mimeType,
+        });
+        return this.normalizeDiagnosis(res);
+      } catch (err) {
+        this.logger.warn(
+          `Groq image diagnosis failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    if (process.env.NODE_ENV === 'test') {
+      return this.buildMockDiagnosis('image');
     }
 
     throw new InternalServerErrorException(
@@ -261,7 +246,6 @@ export class AiService {
 
     const prompt = `${QUOTE_PROMPT}\n\nFair estimate context:\n${JSON.stringify(input.diagnosis)}`;
 
-    // OpenAI → Gemini → Groq (image OCR accuracy order)
     if (this.canUseOpenAi()) {
       try {
         const res = await this.generateOpenAiJson<QuoteComparisonResult>({
@@ -320,19 +304,7 @@ export class AiService {
         if (text.trim()) return text.trim();
       } catch (err) {
         this.logger.warn(
-          `Groq chat failed, trying OpenAI: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    // ── OpenAI ──
-    if (this.canUseOpenAi()) {
-      try {
-        const text = await this.generateOpenAiText({ messages });
-        if (text.trim()) return text.trim();
-      } catch (err) {
-        this.logger.warn(
-          `OpenAI chat failed, trying Gemini: ${(err as Error).message}`,
+          `Groq chat failed, trying Gemini: ${(err as Error).message}`,
         );
       }
     }
@@ -373,18 +345,7 @@ export class AiService {
         return this.normalizeDiagnosis(res);
       } catch (err) {
         this.logger.warn(
-          `Groq text diagnosis failed, trying OpenAI: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    if (this.canUseOpenAi()) {
-      try {
-        const res = await this.generateOpenAiJson<DiagnosisResult>({ prompt });
-        return this.normalizeDiagnosis(res);
-      } catch (err) {
-        this.logger.warn(
-          `OpenAI text diagnosis failed, trying Gemini: ${(err as Error).message}`,
+          `Groq text diagnosis failed, trying Gemini: ${(err as Error).message}`,
         );
       }
     }
@@ -400,42 +361,6 @@ export class AiService {
 
     throw new InternalServerErrorException(
       'All AI providers failed for text diagnosis',
-    );
-  }
-
-  private async transcribeAudio(
-    filePath: string,
-    mimeType: string,
-  ): Promise<string> {
-    if (this.canUseGroq()) {
-      try {
-        return await this.transcribeAudioGroq(filePath);
-      } catch (err) {
-        this.logger.warn(
-          `Groq transcription failed, trying OpenAI: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    if (this.canUseOpenAi()) {
-      const openai = new OpenAI({ apiKey: this.openAiApiKey });
-      const buffer = await readFile(filePath);
-      const file = await toFile(buffer, basename(filePath), {
-        type: mimeType || (lookupMime(filePath) as string) || 'audio/mpeg',
-      });
-      const transcript = await openai.audio.transcriptions.create({
-        file,
-        model: 'whisper-1',
-      });
-      return transcript.text;
-    }
-
-    if (process.env.NODE_ENV === 'test') {
-      return 'Customer reports rattling noise near the front brakes and reduced stopping performance.';
-    }
-
-    throw new InternalServerErrorException(
-      'No transcription API available (Groq and OpenAI both unconfigured or failed)',
     );
   }
 
@@ -523,7 +448,7 @@ export class AiService {
     return transcription.text;
   }
 
-  // ── OpenAI ────────────────────────────────────────────────────────────────
+  // ── OpenAI (только для сравнения смет) ───────────────────────────────────
 
   private async generateOpenAiJson<T>(input: {
     prompt: string;
@@ -577,27 +502,7 @@ export class AiService {
     return safeJsonParse<T>(text);
   }
 
-  private async generateOpenAiText(input: {
-    messages: ChatPromptMessage[];
-  }): Promise<string> {
-    const openai = new OpenAI({ apiKey: this.openAiApiKey });
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: CHAT_SYSTEM_PROMPT },
-        ...input.messages.map((m) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-        })),
-      ],
-      temperature: 0.7,
-    });
-
-    return completion.choices[0]?.message?.content ?? '';
-  }
-
-  // ── Gemini (fallback, kept intact) ───────────────────────────────────────
+  // ── Gemini 2.5 Flash ─────────────────────────────────────────────────────
 
   private async generateGeminiJson<T>(input: {
     prompt: string;
@@ -621,10 +526,7 @@ export class AiService {
       });
     }
 
-    const candidateModels = Array.from(
-      new Set([this.geminiModel, 'gemini-2.0-flash', 'gemini-2.0-flash-lite']),
-    );
-
+    const candidateModels = [GEMINI_PRIMARY, GEMINI_FALLBACK];
     let lastError: Error | null = null;
 
     for (const modelName of candidateModels) {
@@ -667,9 +569,7 @@ export class AiService {
     }
 
     const gemini = new GoogleGenerativeAI(this.geminiApiKey);
-    const candidateModels = Array.from(
-      new Set([this.geminiModel, 'gemini-2.0-flash', 'gemini-2.0-flash-lite']),
-    );
+    const candidateModels = [GEMINI_PRIMARY, GEMINI_FALLBACK];
     let lastError: Error | null = null;
 
     for (const modelName of candidateModels) {
@@ -804,21 +704,6 @@ export class AiService {
     return 'fair';
   }
 
-  // ── Video helpers ─────────────────────────────────────────────────────────
-
-  private async extractVideoFrame(videoPath: string): Promise<string | null> {
-    const framePath = join(tmpdir(), `frame_${Date.now()}.jpg`);
-    try {
-      await execAsync(
-        `ffmpeg -y -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`,
-      );
-      return framePath;
-    } catch (err) {
-      this.logger.warn(`ffmpeg extraction failed: ${(err as Error).message}`);
-      return null;
-    }
-  }
-
   // ── Guards ────────────────────────────────────────────────────────────────
 
   private canUseGroq(): boolean {
@@ -845,7 +730,7 @@ export class AiService {
     );
   }
 
-  // ── Test-only stubs (never called in production) ──────────────────────────
+  // ── Test-only stubs ───────────────────────────────────────────────────────
 
   private buildMockDiagnosis(
     fileType: 'image' | 'audio' | 'video',
